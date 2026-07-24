@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 
 from playwright.sync_api import Page
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 USER_ID_SELECTOR = "#loginUserID"
 PASSWORD_SELECTOR = "#passwordControl"
@@ -24,12 +25,32 @@ def is_logged_in(page: Page) -> bool:
     return "smartdata.mastercard.co.in" in url and "login" not in url
 
 
+def dismiss_cookie_banner(page: Page) -> None:
+    """A OneTrust cookie-consent banner covers the login form on a fresh
+    profile (no prior consent choice saved) and its dark-filter overlay
+    intercepts every click on the fields underneath, hanging the login
+    automation until Playwright's click retries time out. Try clicking
+    the real button first; if it doesn't show up in time, rip the overlay
+    out of the DOM so it can't block anything after."""
+    for selector in ("#onetrust-accept-btn-handler", "#onetrust-reject-all-handler"):
+        try:
+            page.locator(selector).click(timeout=3000)
+            return
+        except PlaywrightTimeoutError:
+            continue
+    page.evaluate(
+        "document.querySelectorAll('#onetrust-consent-sdk, .onetrust-pc-dark-filter')"
+        ".forEach(el => el.remove())"
+    )
+
+
 def fill_and_submit_login(page: Page, username: str, password: str) -> None:
     # This is an Angular form -- .fill() sets the value directly without
     # firing the real keystroke events Angular needs to mark the form
     # valid/touched, leaving the Sign In button stuck disabled (same root
     # cause as the country-code combobox earlier). Type it out for real.
     page.wait_for_selector(USER_ID_SELECTOR, timeout=10000)
+    dismiss_cookie_banner(page)
     user_field = page.locator(USER_ID_SELECTOR)
     user_field.click()
     user_field.fill("")
