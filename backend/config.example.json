@@ -1,0 +1,13 @@
+{
+  "description": "",
+  "min_transaction_amount": "1.00",
+  "max_transaction_amount": "600000.00",
+  "end_date": "21/07/2028",
+  "cumulative_limit": "600000.00",
+  "max_transactions": "100",
+  "first_name": "",
+  "last_name": "",
+  "user_email": "",
+  "user_country_code": "India +91",
+  "user_mobile_number": ""
+}

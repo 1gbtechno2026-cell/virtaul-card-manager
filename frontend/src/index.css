@@ -1,0 +1,10 @@
+body {
+  margin: 0;
+  font: 16px/1.45 system-ui, 'Segoe UI', Roboto, sans-serif;
+  color: #222;
+  background: #fff;
+}
+
+#root {
+  min-height: 100vh;
+}

@@ -1,0 +1,9 @@
+playwright==1.48.0
+openpyxl==3.1.5
+flask==3.0.3
+pymongo==4.17.0
+python-dotenv==1.2.2
+
+# Production WSGI server -- Linux only (the VPS), skipped on Windows dev
+# machines where it can't run anyway. Use `python app.py` for local dev.
+gunicorn==23.0.0; sys_platform != "win32"

@@ -1,0 +1,27 @@
+# systemd service so the app auto-starts on boot and auto-restarts if it
+# crashes -- this is what makes "one command" actually persistent instead
+# of dying the moment you close your SSH session.
+#
+# Edit User, WorkingDirectory, and the venv path below to match your
+# server, then:
+#
+#   sudo cp deploy/virtual-card-creator.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now virtual-card-creator
+#   sudo systemctl status virtual-card-creator     # check it's running
+#   journalctl -u virtual-card-creator -f          # watch its logs
+
+[Unit]
+Description=Virtual Card Creator (Flask + gunicorn + headless browser)
+After=network.target
+
+[Service]
+Type=simple
+User=youruser
+WorkingDirectory=/home/youruser/virtual-card-creator/backend
+ExecStart=/home/youruser/virtual-card-creator/backend/venv/bin/gunicorn --workers 1 --timeout 300 --bind 127.0.0.1:5000 app:app
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,27 @@
+# nginx reverse proxy for the Virtual Card Creator.
+#
+# Copy to /etc/nginx/sites-available/virtual-card-creator, edit
+# server_name, symlink into sites-enabled, then run certbot to add HTTPS:
+#
+#   sudo cp deploy/nginx.conf.example /etc/nginx/sites-available/virtual-card-creator
+#   sudo ln -s /etc/nginx/sites-available/virtual-card-creator /etc/nginx/sites-enabled/
+#   sudo nginx -t && sudo systemctl reload nginx
+#   sudo certbot --nginx -d your-domain.example.com
+
+server {
+    listen 80;
+    server_name your-domain.example.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:5000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # The ICICI login/OTP endpoints can take a while (Playwright calls
+        # in the request path) -- match gunicorn's --timeout 300 in
+        # run_prod.sh so nginx doesn't cut the connection first.
+        proxy_read_timeout 300s;
+    }
+}
