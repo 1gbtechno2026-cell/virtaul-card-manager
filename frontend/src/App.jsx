@@ -3,6 +3,7 @@ import './App.css'
 import AnalyticsPage from './AnalyticsPage'
 import { API_BASE } from './apiBase'
 import DownloadPage from './DownloadPage'
+import { downloadCardsExport } from './download'
 import Header from './Header'
 import { formatIndianNumber, numberToIndianWords } from './numberWords'
 import Sidebar from './Sidebar'
@@ -458,6 +459,12 @@ function Dashboard({ token, bank, onAuthExpired, onBankSessionLost }) {
   const [phase, setPhase] = useState('idle') // idle | launching | waiting-login | creating
   const [log, setLog] = useState([])
   const [results, setResults] = useState([])
+  // How many cards the *running* batch actually asked for -- tracked
+  // separately from `count` (the live "Number of cards" input) so
+  // editing that field mid-batch, or navigating away and back, can't
+  // desync the progress display's denominator from what's actually
+  // running server-side.
+  const [requestedCount, setRequestedCount] = useState(0)
   const [error, setError] = useState('')
   const [showConfirm, setShowConfirm] = useState(false)
   const [cancelling, setCancelling] = useState(false)
@@ -465,6 +472,7 @@ function Dashboard({ token, bank, onAuthExpired, onBankSessionLost }) {
   const browserPollRef = useRef(null)
   const logBoxRef = useRef(null)
   const hasConfirmedOnceRef = useRef(false)
+  const autoDownloadedBatchRef = useRef(null)
 
   const authHeaders = { Authorization: `Bearer ${token}` }
 
@@ -512,6 +520,32 @@ function Dashboard({ token, bank, onAuthExpired, onBankSessionLost }) {
   }, [])
 
   useEffect(() => {
+    // A batch keeps running server-side even if you navigate away from
+    // this tab -- switching tabs unmounts this component, which wipes
+    // its local log/results state and kills the poll interval below.
+    // Reattach to whatever's actually happening on the server instead of
+    // showing a blank slate when you come back mid-batch.
+    fetch(`${API_BASE}/status`, { headers: authHeaders })
+      .then((res) => {
+        if (res.status === 401) {
+          onAuthExpired()
+          return null
+        }
+        return res.json()
+      })
+      .then((data) => {
+        if (!data || !data.running) return
+        setPhase('creating')
+        setLog(data.log)
+        setResults(data.results)
+        setRequestedCount(data.requested_count)
+        statusPollRef.current = setInterval(pollStatus, 1000)
+      })
+      .catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
     if (logBoxRef.current) {
       logBoxRef.current.scrollTop = logBoxRef.current.scrollHeight
     }
@@ -535,10 +569,34 @@ function Dashboard({ token, bank, onAuthExpired, onBankSessionLost }) {
         if (!data) return
         setLog(data.log)
         setResults(data.results)
+        setRequestedCount(data.requested_count)
         if (!data.running) {
           clearInterval(statusPollRef.current)
           setPhase('idle')
           setCancelling(false)
+
+          // Auto-download the batch's Excel export the moment it finishes
+          // -- no click needed. Guarded by the ref so a batch that
+          // created at least one card only triggers this once, even if
+          // this poll response is seen more than once before the
+          // interval actually clears.
+          if (
+            data.batch_id &&
+            data.results.length > 0 &&
+            autoDownloadedBatchRef.current !== data.batch_id
+          ) {
+            autoDownloadedBatchRef.current = data.batch_id
+            downloadCardsExport(
+              token,
+              `batch_id=${data.batch_id}`,
+              `batch_${data.batch_id}.xlsx`,
+              onAuthExpired
+            ).catch(() => {
+              setError(
+                'Batch finished, but the automatic download failed -- use the Download page to get it manually.'
+              )
+            })
+          }
         }
       })
   }
@@ -578,6 +636,9 @@ function Dashboard({ token, bank, onAuthExpired, onBankSessionLost }) {
 
     await ensureBrowserReady()
     setPhase('creating')
+    // Snapshot now, before the "Number of cards" field can be edited out
+    // from under the batch that's about to start.
+    setRequestedCount(Number(count))
 
     const res = await fetch(`${API_BASE}/create`, {
       method: 'POST',
@@ -626,7 +687,8 @@ function Dashboard({ token, bank, onAuthExpired, onBankSessionLost }) {
 
   const isBusy = phase !== 'idle'
   const completedCount = log.filter((l) => l.startsWith('  ->')).length
-  const progressPct = count > 0 ? Math.min(100, (completedCount / count) * 100) : 0
+  const progressPct =
+    requestedCount > 0 ? Math.min(100, (completedCount / requestedCount) * 100) : 0
 
   return (
     <div className="page">
@@ -696,7 +758,7 @@ function Dashboard({ token, bank, onAuthExpired, onBankSessionLost }) {
                 <div className="progress-fill" style={{ width: `${progressPct}%` }} />
               </div>
               <span className="progress-text">
-                {completedCount} / {count} cards created
+                {completedCount} cards created out of {requestedCount}
               </span>
               <button
                 type="button"

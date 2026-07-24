@@ -1,6 +1,14 @@
 import { useEffect, useState } from 'react'
 import { API_BASE } from './apiBase'
+import { downloadCardsExport } from './download'
 import { formatIndianNumber } from './numberWords'
+
+const BATCH_STATUS_LABEL = {
+  running: 'Running...',
+  completed: 'Completed',
+  cancelled: 'Cancelled',
+  failed: 'Failed',
+}
 
 function DownloadPage({ token, onAuthExpired }) {
   const [dateFrom, setDateFrom] = useState('')
@@ -11,6 +19,8 @@ function DownloadPage({ token, onAuthExpired }) {
   const [downloading, setDownloading] = useState(false)
   const [error, setError] = useState('')
   const [mongoConfigured, setMongoConfigured] = useState(true)
+  const [batches, setBatches] = useState([])
+  const [downloadingBatchId, setDownloadingBatchId] = useState(null)
 
   const authHeaders = { Authorization: `Bearer ${token}` }
 
@@ -47,8 +57,26 @@ function DownloadPage({ token, onAuthExpired }) {
     }
   }
 
+  const fetchBatches = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/batches`, { headers: authHeaders })
+      if (res.status === 401) {
+        onAuthExpired()
+        return
+      }
+      const body = await res.json()
+      if (res.ok) {
+        setBatches(body.batches)
+      }
+    } catch {
+      // Non-critical -- the date/search filter section above still works
+      // without batch history, so just leave the list empty.
+    }
+  }
+
   useEffect(() => {
     fetchCards()
+    fetchBatches()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -64,31 +92,33 @@ function DownloadPage({ token, onAuthExpired }) {
     setDownloading(true)
     setError('')
     try {
-      const res = await fetch(`${API_BASE}/api/cards/download?${buildQuery()}`, {
-        headers: authHeaders,
-      })
-      if (res.status === 401) {
-        onAuthExpired()
-        return
-      }
-      if (!res.ok) {
-        const body = await res.json()
-        setError(body.error || 'Download failed.')
-        return
-      }
-      const blob = await res.blob()
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = `cards_export_${Date.now()}.xlsx`
-      document.body.appendChild(link)
-      link.click()
-      link.remove()
-      URL.revokeObjectURL(url)
+      await downloadCardsExport(
+        token,
+        buildQuery(),
+        `cards_export_${Date.now()}.xlsx`,
+        onAuthExpired
+      )
     } catch {
-      setError('Could not reach the backend.')
+      setError('Could not reach the backend, or the download failed.')
     } finally {
       setDownloading(false)
+    }
+  }
+
+  const handleBatchDownload = async (batch) => {
+    setDownloadingBatchId(batch.batch_id)
+    setError('')
+    try {
+      await downloadCardsExport(
+        token,
+        `batch_id=${batch.batch_id}`,
+        `batch_${batch.batch_id}.xlsx`,
+        onAuthExpired
+      )
+    } catch {
+      setError('Could not reach the backend, or the download failed.')
+    } finally {
+      setDownloadingBatchId(null)
     }
   }
 
@@ -104,6 +134,56 @@ function DownloadPage({ token, onAuthExpired }) {
           </p>
         </div>
       </header>
+
+      <div className="panel">
+        <h2 className="panel-title">Batches</h2>
+        <div className="table-wrap">
+          <table className="cards-table">
+            <thead>
+              <tr>
+                <th>Started</th>
+                <th>Description</th>
+                <th>Cards</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {batches.map((batch) => (
+                <tr key={batch.batch_id}>
+                  <td>{batch.started_at ? new Date(batch.started_at).toLocaleString() : '—'}</td>
+                  <td>{batch.description || '—'}</td>
+                  <td>
+                    {batch.created_count} / {batch.requested_count}
+                  </td>
+                  <td>{BATCH_STATUS_LABEL[batch.status] || batch.status}</td>
+                  <td>
+                    <button
+                      type="button"
+                      className="secondary-btn"
+                      onClick={() => handleBatchDownload(batch)}
+                      disabled={
+                        batch.status === 'running' ||
+                        batch.created_count === 0 ||
+                        downloadingBatchId === batch.batch_id
+                      }
+                    >
+                      {downloadingBatchId === batch.batch_id ? 'Downloading...' : 'Download'}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {batches.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="table-empty">
+                    No batches yet -- create some cards from the Cards tab first.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
       <form className="panel filter-panel" onSubmit={handleFilter}>
         <div className="filter-row">

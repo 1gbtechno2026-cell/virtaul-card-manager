@@ -19,9 +19,11 @@ load_dotenv(Path(__file__).parent / ".env")
 MONGODB_URI = os.environ.get("MONGODB_URI", "").strip()
 MONGODB_DB_NAME = os.environ.get("MONGODB_DB_NAME", "virtual_card_creator").strip()
 COLLECTION_NAME = "cards"
+BATCHES_COLLECTION_NAME = "batches"
 
 _client = None
 _collection = None
+_batches_collection = None
 
 
 def is_configured() -> bool:
@@ -38,10 +40,28 @@ def get_collection():
     if _collection is None:
         from pymongo import MongoClient
 
-        _client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
+        if _client is None:
+            _client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
         _collection = _client[MONGODB_DB_NAME][COLLECTION_NAME]
 
     return _collection
+
+
+def get_batches_collection():
+    """Lazily connects on first use. Returns None if MONGODB_URI isn't set."""
+    global _client, _batches_collection
+
+    if not is_configured():
+        return None
+
+    if _batches_collection is None:
+        from pymongo import MongoClient
+
+        if _client is None:
+            _client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
+        _batches_collection = _client[MONGODB_DB_NAME][BATCHES_COLLECTION_NAME]
+
+    return _batches_collection
 
 
 def is_connected() -> bool:
@@ -57,7 +77,7 @@ def is_connected() -> bool:
         return False
 
 
-def save_card(details: dict) -> None:
+def save_card(details: dict, batch_id: str | None = None) -> None:
     """Inserts one card record. No-op if Mongo isn't configured. Raises
     on a real connection/write failure so the caller can log it -- but
     should not be allowed to break card creation itself."""
@@ -76,15 +96,96 @@ def save_card(details: dict) -> None:
             "description": details.get("description", ""),
             "created_by": details.get("created_by", ""),
             "created_at": datetime.now(timezone.utc),
+            "batch_id": batch_id,
         }
     )
 
 
-def get_all_cards(date_from: str | None = None, date_to: str | None = None, search: str | None = None) -> list:
+def create_batch(description: str, created_by: str, requested_count: int) -> str:
+    """Inserts a 'running' batch record for one Create Cards run. Returns
+    its id (used as batch_id on every card the run creates), or "" if
+    Mongo isn't configured -- callers that reach this point have already
+    confirmed a working connection via is_connected(), so this is just a
+    defensive fallback, not the normal path."""
+    collection = get_batches_collection()
+    if collection is None:
+        return ""
+
+    result = collection.insert_one(
+        {
+            "description": description,
+            "created_by": created_by,
+            "requested_count": requested_count,
+            "created_count": 0,
+            "status": "running",
+            "started_at": datetime.now(timezone.utc),
+            "finished_at": None,
+            "error": None,
+        }
+    )
+    return str(result.inserted_id)
+
+
+def finish_batch(batch_id: str, status: str, error: str | None = None) -> None:
+    """Finalizes a batch record. created_count is computed by counting
+    actual `cards` documents for this batch_id rather than trusting a
+    passed-in number -- a batch that fails partway through still has its
+    already-created cards saved, so the DB is the only reliable source
+    for how many actually got made."""
+    if not batch_id:
+        return
+
+    batches = get_batches_collection()
+    cards = get_collection()
+    if batches is None or cards is None:
+        return
+
+    from bson import ObjectId
+
+    created_count = cards.count_documents({"batch_id": batch_id})
+    batches.update_one(
+        {"_id": ObjectId(batch_id)},
+        {
+            "$set": {
+                "status": status,
+                "error": error,
+                "created_count": created_count,
+                "finished_at": datetime.now(timezone.utc),
+            }
+        },
+    )
+
+
+def get_all_batches() -> list:
+    """Returns stored batches, most recent first. Empty list if Mongo
+    isn't configured."""
+    collection = get_batches_collection()
+    if collection is None:
+        return []
+
+    docs = list(collection.find().sort("started_at", -1))
+    for doc in docs:
+        doc["batch_id"] = str(doc.pop("_id"))
+        for field in ("started_at", "finished_at"):
+            value = doc.get(field)
+            if isinstance(value, datetime) and value.tzinfo is None:
+                doc[field] = value.replace(tzinfo=timezone.utc).isoformat()
+            elif isinstance(value, datetime):
+                doc[field] = value.isoformat()
+    return docs
+
+
+def get_all_cards(
+    date_from: str | None = None,
+    date_to: str | None = None,
+    search: str | None = None,
+    batch_id: str | None = None,
+) -> list:
     """Returns stored cards, most recent first, optionally filtered.
 
     date_from/date_to: 'YYYY-MM-DD' strings, inclusive on both ends.
     search: matched against card number or card alias (case-insensitive).
+    batch_id: restricts to cards created by one Create Cards run.
 
     Empty list if Mongo isn't configured."""
     collection = get_collection()
@@ -92,6 +193,8 @@ def get_all_cards(date_from: str | None = None, date_to: str | None = None, sear
         return []
 
     query = {}
+    if batch_id:
+        query["batch_id"] = batch_id
 
     date_filter = {}
     if date_from:

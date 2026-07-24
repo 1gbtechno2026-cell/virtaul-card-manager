@@ -32,7 +32,14 @@ from openpyxl import Workbook
 from playwright.sync_api import sync_playwright
 
 from automate import CONFIG_PATH, DEBUG_PORT, run_batch
-from db import get_all_cards, is_configured as mongo_is_configured, is_connected as mongo_is_connected
+from db import (
+    create_batch,
+    finish_batch,
+    get_all_batches,
+    get_all_cards,
+    is_configured as mongo_is_configured,
+    is_connected as mongo_is_connected,
+)
 from icici_login import fill_and_submit_login, logout, submit_otp, wait_for_post_login_state
 
 app = Flask(__name__)
@@ -83,7 +90,14 @@ FIELDS = [
 ]
 
 state_lock = threading.Lock()
-state = {"running": False, "log": [], "results": [], "cancel_requested": False}
+state = {
+    "running": False,
+    "log": [],
+    "results": [],
+    "cancel_requested": False,
+    "batch_id": None,
+    "requested_count": 0,
+}
 
 
 def load_saved_config() -> dict:
@@ -199,13 +213,21 @@ def is_cancel_requested() -> bool:
         return state["cancel_requested"]
 
 
-def worker(cfg: dict, count: int) -> None:
+def worker(cfg: dict, count: int, batch_id: str) -> None:
+    status = "completed"
+    error = None
     try:
-        results = run_batch(cfg, count, log=append_log, should_cancel=is_cancel_requested)
+        results = run_batch(cfg, count, batch_id, log=append_log, should_cancel=is_cancel_requested)
         with state_lock:
             state["results"].extend(results)
-        append_log(f"Done. Created {len(results)}/{count} card(s). Saved to the database.")
+        if len(results) < count:
+            status = "cancelled"
+            append_log(f"Cancelled. Created {len(results)}/{count} card(s). Saved to the database.")
+        else:
+            append_log(f"Done. Created {len(results)}/{count} card(s). Saved to the database.")
     except Exception as e:
+        status = "failed"
+        error = str(e)
         append_log(f"Failed: {e}")
     finally:
         # Runs on every outcome -- success, failure, or cancellation --
@@ -219,6 +241,10 @@ def worker(cfg: dict, count: int) -> None:
             append_log("Browser closed. Log in again to create more cards.")
         except Exception as e:
             append_log(f"Warning: could not fully close the browser session: {e}")
+        try:
+            finish_batch(batch_id, status=status, error=error)
+        except Exception as e:
+            append_log(f"Warning: could not finalize batch record: {e}")
         with state_lock:
             state["running"] = False
             state["cancel_requested"] = False
@@ -368,12 +394,18 @@ def create():
 
     cfg["created_by"] = cfg["description"]
 
+    batch_id = create_batch(
+        description=cfg["description"], created_by=cfg["created_by"], requested_count=count
+    )
+
     with state_lock:
         state["running"] = True
         state["log"] = []
         state["results"] = []
+        state["batch_id"] = batch_id
+        state["requested_count"] = count
 
-    threading.Thread(target=worker, args=(cfg, count), daemon=True).start()
+    threading.Thread(target=worker, args=(cfg, count, batch_id), daemon=True).start()
     return jsonify({"status": "started"})
 
 
@@ -392,6 +424,7 @@ def _card_filters_from_request():
         "date_from": request.args.get("date_from") or None,
         "date_to": request.args.get("date_to") or None,
         "search": request.args.get("search") or None,
+        "batch_id": request.args.get("batch_id") or None,
     }
 
 
@@ -401,6 +434,14 @@ def api_cards():
     if not mongo_is_configured():
         return jsonify({"error": "MongoDB is not configured (set MONGODB_URI in backend/.env)."}), 409
     return jsonify({"cards": get_all_cards(**_card_filters_from_request())})
+
+
+@app.route("/api/batches")
+@require_auth
+def api_batches():
+    if not mongo_is_configured():
+        return jsonify({"error": "MongoDB is not configured (set MONGODB_URI in backend/.env)."}), 409
+    return jsonify({"batches": get_all_batches()})
 
 
 @app.route("/api/cards/download")
@@ -450,7 +491,13 @@ def api_cards_download():
 def status():
     with state_lock:
         return jsonify(
-            {"running": state["running"], "log": state["log"], "results": state["results"]}
+            {
+                "running": state["running"],
+                "log": state["log"],
+                "results": state["results"],
+                "batch_id": state["batch_id"],
+                "requested_count": state["requested_count"],
+            }
         )
 
 

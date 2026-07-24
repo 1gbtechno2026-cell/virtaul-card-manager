@@ -192,13 +192,14 @@ def create_one_card(page, cfg: dict, log=print) -> dict:
     return submit_and_read_result(page, cfg)
 
 
-def run_batch(cfg: dict, count: int, log=print, should_cancel=None) -> list:
+def run_batch(cfg: dict, count: int, batch_id: str | None = None, log=print, should_cancel=None) -> list:
     """Attaches to the browser launched by launch_browser.py and creates
     `count` cards using field values from `cfg`. Calls log(message) for
     each progress update. If should_cancel() returns True, stops before
     starting the next card (already-created cards are kept). Returns the
     list of created card detail dicts. Reusable by both the CLI (main())
-    and gui.py."""
+    and gui.py. batch_id (if given) is stamped onto every saved card so
+    they can be queried/downloaded as one group later."""
     cfg = dict(cfg)
     cfg.setdefault("start_date", datetime.now().strftime("%d/%m/%Y"))
     cfg.setdefault("end_date", datetime.now().strftime("%d/%m/%Y"))
@@ -230,7 +231,7 @@ def run_batch(cfg: dict, count: int, log=print, should_cancel=None) -> list:
                     break
                 log(f"Creating card {i + 1}/{count}...")
                 details = create_one_card(page, cfg, log=log)
-                save_card(details)
+                save_card(details, batch_id=batch_id)
                 results.append(details)
                 log(f"  -> {details['card_number']} saved to database")
         except Exception:
