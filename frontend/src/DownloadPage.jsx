@@ -136,7 +136,7 @@ function DownloadPage({ token, onAuthExpired }) {
       </header>
 
       <div className="panel">
-        <h2 className="panel-title">Batches</h2>
+        <h2 className="panel-title">Batches not the bitch </h2>
         <div className="table-wrap">
           <table className="cards-table">
             <thead>
