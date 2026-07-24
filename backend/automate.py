@@ -19,6 +19,9 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
 from db import save_card
+from icici_login import is_logged_in
+
+MAX_FILL_RETRIES = 2
 
 CONFIG_PATH = Path(__file__).parent / "config.json"
 DEBUG_PORT = 9222
@@ -74,7 +77,10 @@ def find_country_code_field_id(page) -> str:
     return field_id
 
 
-def create_one_card(page, cfg: dict) -> dict:
+def navigate_and_fill_form(page, cfg: dict) -> None:
+    """Everything up to (not including) the Submit click. Nothing here
+    has touched Mastercard's servers in a way that creates a card, so
+    it's safe for create_one_card() to retry this on a timeout."""
     # Always start scrolled to top -- a scrolled-down leftover page can
     # hide the (non-sticky) header. Do NOT page.goto() here: this is an
     # SPA and a full navigation to the bare root URL drops the session
@@ -132,8 +138,22 @@ def create_one_card(page, cfg: dict) -> dict:
 
     page.fill(FIELD_IDS["user_mobile_number"], cfg["user_mobile_number"])
 
+
+def submit_and_read_result(page, cfg: dict) -> dict:
+    """The Submit click and reading back the confirmation. Never retried
+    by create_one_card(): if this times out, we genuinely cannot tell
+    whether the card was created on Mastercard's side or not, and
+    blindly retrying risks creating a real duplicate card."""
     page.locator("#submitBtn").click()
-    page.wait_for_selector("#cardNumberLabel", timeout=20000)
+    try:
+        page.wait_for_selector("#cardNumberLabel", timeout=20000)
+    except PlaywrightTimeoutError as e:
+        raise RuntimeError(
+            "Submitted the form but couldn't confirm the card was created "
+            "(no confirmation appeared in time). This card was NOT retried "
+            "-- check Smart Data / your card history manually before "
+            "creating more, in case it was actually created."
+        ) from e
 
     card_number_raw = page.input_value("#cardNumberLabel")
     card_number = card_number_raw.split(" (")[0].replace(" ", "")
@@ -148,6 +168,28 @@ def create_one_card(page, cfg: dict) -> dict:
         "description": page.input_value(FIELD_IDS["description"]),
         "created_by": cfg.get("created_by", ""),
     }
+
+
+def create_one_card(page, cfg: dict, log=print) -> dict:
+    """Fills and submits one purchase request. The form-filling phase is
+    retried on a timeout as long as the session still looks logged in --
+    a slow page reload shouldn't abort the whole batch. The submit phase
+    is never retried (see submit_and_read_result)."""
+    for attempt in range(1, MAX_FILL_RETRIES + 2):
+        try:
+            navigate_and_fill_form(page, cfg)
+            break
+        except PlaywrightTimeoutError:
+            if not is_logged_in(page):
+                raise RuntimeError(
+                    "Session expired mid-batch -- logged out of Smart Data."
+                ) from None
+            if attempt > MAX_FILL_RETRIES:
+                raise
+            log(f"  Form step timed out (attempt {attempt}/{MAX_FILL_RETRIES + 1}) -- retrying...")
+            page.wait_for_timeout(2000)
+
+    return submit_and_read_result(page, cfg)
 
 
 def run_batch(cfg: dict, count: int, log=print, should_cancel=None) -> list:
@@ -187,7 +229,7 @@ def run_batch(cfg: dict, count: int, log=print, should_cancel=None) -> list:
                     log(f"Cancelled -- created {i}/{count} card(s) before stopping.")
                     break
                 log(f"Creating card {i + 1}/{count}...")
-                details = create_one_card(page, cfg)
+                details = create_one_card(page, cfg, log=log)
                 save_card(details)
                 results.append(details)
                 log(f"  -> {details['card_number']} saved to database")

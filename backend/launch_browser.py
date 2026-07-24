@@ -26,6 +26,7 @@ import sys
 from pathlib import Path
 
 PROFILE_DIR = Path(__file__).parent / "chrome-profile"
+PID_PATH = Path(__file__).parent / "chrome.pid"
 DEBUG_PORT = 9222
 START_URL = "https://smartdata.mastercard.co.in/"
 
@@ -70,11 +71,17 @@ def main() -> None:
 
     proc = subprocess.Popen(args)
     print(f"Headless Chrome launched (pid={proc.pid}), remote debugging on port {DEBUG_PORT}.")
+    # Written so app.py can kill this exact process later (see
+    # close_browser_session() in app.py) -- killing this wrapper script
+    # alone does not kill Chrome, since nothing here forwards signals to it.
+    PID_PATH.write_text(str(proc.pid))
 
     try:
         proc.wait()
     except KeyboardInterrupt:
         pass
+    finally:
+        PID_PATH.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

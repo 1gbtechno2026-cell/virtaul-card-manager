@@ -97,6 +97,42 @@ def find_otp_field(page: Page) -> bool:
             page.wait_for_timeout(500)
 
 
+def logout(page: Page) -> bool:
+    """Best-effort graceful logout -- clicks a logout control if one can
+    be found, so the session is invalidated server-side (not just walked
+    away from). The real button hasn't been confirmed against the live
+    DOM yet (unlike every other selector here, which was found via
+    diagnose.py against a live logged-in session first) -- this tries the
+    most likely spots and gives up quietly rather than raising, since the
+    caller always hard-closes the browser afterward regardless of whether
+    this succeeds. Returns True if it looks like logout worked.
+
+    TODO: run diagnose.py against a live logged-in session (search for
+    "Logout" / "Sign Out" / the profile menu) and tighten these selectors
+    once confirmed.
+    """
+    if not is_logged_in(page):
+        return True
+
+    header = page.frame_locator("iframe[src*='smart-data-header-ui']")
+    candidates = [
+        lambda: header.get_by_text("Logout", exact=False).click(timeout=3000),
+        lambda: header.get_by_text("Sign Out", exact=False).click(timeout=3000),
+        lambda: page.get_by_text("Logout", exact=False).click(timeout=3000),
+        lambda: page.get_by_text("Sign Out", exact=False).click(timeout=3000),
+    ]
+    for attempt in candidates:
+        try:
+            attempt()
+            page.wait_for_timeout(500)
+            if not is_logged_in(page):
+                return True
+        except Exception:
+            continue
+
+    return not is_logged_in(page)
+
+
 def submit_otp(page: Page, otp: str) -> dict:
     digits = otp.strip()
     if len(digits) != 6 or not digits.isdigit():

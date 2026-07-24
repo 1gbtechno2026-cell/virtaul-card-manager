@@ -5,6 +5,7 @@ config.json
 
 # Headless Chrome profile -- session cookies, cache, local state
 chrome-profile/
+chrome.pid
 
 # Debug screenshots written on automation errors
 debug_*.png

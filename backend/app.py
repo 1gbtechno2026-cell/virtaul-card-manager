@@ -17,7 +17,9 @@ Usage:
 import functools
 import io
 import json
+import os
 import secrets
+import signal
 import subprocess
 import sys
 import threading
@@ -31,13 +33,14 @@ from playwright.sync_api import sync_playwright
 
 from automate import CONFIG_PATH, DEBUG_PORT, run_batch
 from db import get_all_cards, is_configured as mongo_is_configured, is_connected as mongo_is_connected
-from icici_login import fill_and_submit_login, submit_otp, wait_for_post_login_state
+from icici_login import fill_and_submit_login, logout, submit_otp, wait_for_post_login_state
 
 app = Flask(__name__)
 
 BASE_DIR = Path(__file__).parent
 AUTH_PATH = BASE_DIR / "auth.json"
 FRONTEND_DIST = BASE_DIR.parent / "frontend" / "dist"
+CHROME_PID_PATH = BASE_DIR / "chrome.pid"
 browser_process: subprocess.Popen | None = None
 browser_launch_lock = threading.Lock()
 
@@ -130,6 +133,46 @@ def get_connected_page():
     return p, page
 
 
+def close_browser_session() -> None:
+    """Called after every batch (success or failure) so no live bank
+    session is ever left running unattended. Best-effort graceful logout
+    first, then a hard kill of the actual Chrome process (see chrome.pid,
+    written by launch_browser.py) regardless of whether logout worked --
+    that's the real guarantee here, logout is just the polite version of
+    it. Resets browser_process so ensure_browser_launched() spawns a
+    fresh browser next time it's needed."""
+    status = check_browser_status()
+    if status["reachable"] and status["logged_in"]:
+        try:
+            p, page = get_connected_page()
+            try:
+                logout(page)
+            finally:
+                p.stop()
+        except Exception as e:
+            append_log(f"Could not log out cleanly: {e}")
+
+    if CHROME_PID_PATH.exists():
+        try:
+            os.kill(int(CHROME_PID_PATH.read_text().strip()), signal.SIGTERM)
+        except (ValueError, ProcessLookupError, PermissionError):
+            pass
+        CHROME_PID_PATH.unlink(missing_ok=True)
+
+    global browser_process
+    with browser_launch_lock:
+        if browser_process is not None:
+            # Reap it -- Chrome exiting (above) makes launch_browser.py's
+            # own proc.wait() return and the wrapper process exit shortly
+            # after, but nothing has waited on *this* Popen handle yet.
+            # Skipping that leaves a zombie process entry behind.
+            try:
+                browser_process.wait(timeout=5)
+            except Exception:
+                pass
+        browser_process = None
+
+
 @app.before_request
 def handle_preflight():
     if request.method == "OPTIONS":
@@ -165,6 +208,17 @@ def worker(cfg: dict, count: int) -> None:
     except Exception as e:
         append_log(f"Failed: {e}")
     finally:
+        # Runs on every outcome -- success, failure, or cancellation --
+        # so no live bank session is ever left open unattended. Logged
+        # and completed before the "running" flag flips so the frontend's
+        # final /status poll (which stops once running=False) still shows
+        # these lines.
+        append_log("Logging out and closing the browser...")
+        try:
+            close_browser_session()
+            append_log("Browser closed. Log in again to create more cards.")
+        except Exception as e:
+            append_log(f"Warning: could not fully close the browser session: {e}")
         with state_lock:
             state["running"] = False
             state["cancel_requested"] = False
