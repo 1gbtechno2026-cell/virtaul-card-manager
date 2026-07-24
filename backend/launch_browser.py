@@ -61,6 +61,10 @@ def main() -> None:
     args = [
         chrome_path,
         "--headless=new",
+        # Chrome refuses to start as root without this (common on VPS
+        # deployments that run everything as root) -- confirmed the hard
+        # way in production, see crbug.com/638180.
+        "--no-sandbox",
         f"--remote-debugging-port={DEBUG_PORT}",
         f"--user-data-dir={PROFILE_DIR}",
         "--window-size=1920,1080",
