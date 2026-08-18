@@ -133,6 +133,17 @@ def dismiss_session_dialogs(page) -> None:
         pass
 
 
+def header_iframe_present(page) -> bool:
+    try:
+        return page.locator(HEADER_IFRAME_SELECTOR).count() > 0
+    except Exception:
+        return False
+
+
+def is_on_create_form_page(page) -> bool:
+    return "createPurchaseRequestRender.do" in (page.url or "")
+
+
 def wait_for_header_iframe(page, timeout_ms: int = 15000) -> bool:
     """True if a header iframe attaches. Use .last so leftover iframes
     from earlier navigations don't make the locator wait for uniqueness
@@ -224,11 +235,25 @@ def raise_if_logged_out() -> None:
     raise RuntimeError("Session expired mid-batch -- logged out of Smart Data.")
 
 
-def open_create_form(page, log=print) -> None:
-    """Get a fresh Create Single Request form. Header-menu first; if the
-    iframe is missing or dead, dump frames and recover in-page rather
-    than aborting the batch. Do NOT goto() the SPA root -- that drops
+def open_create_form_via_direct_url(page, log=print) -> None:
+    """The GWT create page has no Angular header -- only a dummy
+    iframe (src javascript:''). Reloading this URL (not the SPA root)
+    is how we get a fresh form after a confirmation, without dropping
     the session."""
+    log("  Opening a fresh create form via direct URL")
+    page.goto(CREATE_FORM_URL, wait_until="domcontentloaded", timeout=30000)
+    if not is_logged_in(page):
+        dump_page_frames(page, log)
+        raise_if_logged_out()
+    wait_for_fresh_form(page, timeout_ms=20000)
+
+
+def open_create_form(page, log=print) -> None:
+    """Get a fresh Create Single Request form. Once we are on the GWT
+    create/confirmation page the header nav is gone, so skip Payment
+    Control entirely and reload the form URL. Header-menu is only used
+    from the SPA shell (first card). Do NOT goto() the SPA root -- that
+    drops the session."""
     page.evaluate("window.scrollTo(0, 0)")
     page.wait_for_timeout(300)
     dismiss_session_dialogs(page)
@@ -237,41 +262,43 @@ def open_create_form(page, log=print) -> None:
         dump_page_frames(page, log)
         raise_if_logged_out()
 
-    iframe_found = wait_for_header_iframe(page, timeout_ms=15000)
-    if not iframe_found:
-        log("  Header iframe not attached -- dumping frames and trying fallbacks")
-        dump_page_frames(page, log)
-        if not is_logged_in(page):
-            raise_if_logged_out()
-    else:
+    # After card 1 we live on createPurchaseRequestRender.do. That page
+    # never contains smart-data-header-ui -- only a dummy javascript:''
+    # iframe -- so Payment Control always times out. Reload the form URL
+    # instead (safe even if a leftover confirmation is still showing).
+    if is_on_create_form_page(page) and not header_iframe_present(page):
+        open_create_form_via_direct_url(page, log)
+        return
+
+    iframe_found = wait_for_header_iframe(page, timeout_ms=8000)
+    if iframe_found:
         try:
             open_create_form_via_header_menu(page)
             wait_for_fresh_form(page)
             return
         except PlaywrightTimeoutError:
-            log("  Header menu path timed out -- dumping frames, trying in-page fallback")
+            log("  Header menu path timed out -- dumping frames, trying fallbacks")
             dump_page_frames(page, log)
-
-    if not is_logged_in(page):
-        raise_if_logged_out()
-
-    try:
-        log("  Trying Payment Control / Purchase Requests in any frame")
-        open_create_form_via_any_frame(page)
-        wait_for_fresh_form(page)
-        return
-    except PlaywrightTimeoutError:
-        log("  In-page menu fallback timed out")
-
-    if not is_logged_in(page):
-        raise_if_logged_out()
-
-    log("  Opening a fresh create form via direct URL (session still looks valid)")
-    page.goto(CREATE_FORM_URL, wait_until="domcontentloaded", timeout=30000)
-    if not is_logged_in(page):
+    else:
+        log("  Header iframe not attached -- dumping frames and trying fallbacks")
         dump_page_frames(page, log)
+
+    if not is_logged_in(page):
         raise_if_logged_out()
-    wait_for_fresh_form(page, timeout_ms=20000)
+
+    if header_iframe_present(page):
+        try:
+            log("  Trying Payment Control / Purchase Requests in any frame")
+            open_create_form_via_any_frame(page)
+            wait_for_fresh_form(page)
+            return
+        except PlaywrightTimeoutError:
+            log("  In-page menu fallback timed out")
+
+    if not is_logged_in(page):
+        raise_if_logged_out()
+
+    open_create_form_via_direct_url(page, log)
 
 
 def navigate_and_fill_form(page, cfg: dict, log=print) -> None:
