@@ -262,11 +262,12 @@ def open_create_form(page, log=print) -> None:
         dump_page_frames(page, log)
         raise_if_logged_out()
 
-    # After card 1 we live on createPurchaseRequestRender.do. That page
-    # never contains smart-data-header-ui -- only a dummy javascript:''
-    # iframe -- so Payment Control always times out. Reload the form URL
-    # instead (safe even if a leftover confirmation is still showing).
-    if is_on_create_form_page(page) and not header_iframe_present(page):
+    # After card 1 we live on createPurchaseRequestRender.do. A header
+    # iframe sometimes flickers in (or a leftover one is still in the
+    # DOM) but Payment Control is not actually clickable there -- waiting
+    # on it just dumps this timeout into the log every few cards. Always
+    # reload the form URL instead.
+    if is_on_create_form_page(page):
         open_create_form_via_direct_url(page, log)
         return
 

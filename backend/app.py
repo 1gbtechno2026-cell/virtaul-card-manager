@@ -40,7 +40,13 @@ from db import (
     is_configured as mongo_is_configured,
     is_connected as mongo_is_connected,
 )
-from icici_login import fill_and_submit_login, logout, submit_otp, wait_for_post_login_state
+from icici_login import (
+    fill_and_submit_login,
+    is_logged_in,
+    logout,
+    submit_otp,
+    wait_for_post_login_state,
+)
 
 app = Flask(__name__)
 
@@ -130,7 +136,11 @@ def check_browser_status() -> dict:
             context = browser.contexts[0]
             page = context.pages[0] if context.pages else None
             url = page.url if page else ""
-            logged_in = "smartdata.mastercard.co.in" in url and "login" not in url
+            logged_in = (
+                "smartdata.mastercard.co.in" in url
+                and "login" not in url
+                and "one-time-passcode" not in url
+            )
             return {"reachable": True, "logged_in": logged_in, "url": url}
     except Exception:
         return {"reachable": True, "logged_in": False, "url": ""}
@@ -317,6 +327,9 @@ def icici_login_endpoint():
 
     p, page = get_connected_page()
     try:
+        if is_logged_in(page):
+            return jsonify({"status": "logged_in", "url": page.url})
+
         fill_and_submit_login(page, username, password)
         result = wait_for_post_login_state(page)
 

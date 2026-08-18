@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { API_BASE } from './apiBase'
+import ScreenLoader from './ScreenLoader'
 
 const LINE_COLOR = '#6d28d9' // var(--primary) -- single series, title names it, no legend needed
 
@@ -190,6 +191,9 @@ function AnalyticsPage({ token, onAuthExpired }) {
 
   return (
     <div className="page">
+      {loading && (
+        <ScreenLoader message="Loading dashboard..." subtext="Fetching card history from the database." />
+      )}
       <header className="hero">
         <div className="hero-icon">📊</div>
         <div className="hero-text">
@@ -223,9 +227,7 @@ function AnalyticsPage({ token, onAuthExpired }) {
           </button>
         </div>
 
-        {loading ? (
-          <div className="chart-empty">Loading...</div>
-        ) : showTable ? (
+        {showTable ? (
           <div className="table-wrap">
             <table className="cards-table">
               <thead>

@@ -18,19 +18,22 @@ USER_ID_SELECTOR = "#loginUserID"
 PASSWORD_SELECTOR = "#passwordControl"
 OTP_BOX_IDS = [f"otp-input-{i}" for i in range(6)]
 DEBUG_DIR = Path(__file__).parent
+LOGIN_START_URL = "https://smartdata.mastercard.co.in/"
 
 
 def is_logged_in(page: Page) -> bool:
     """URL-only checks miss a common failure mode: Smart Data leaves you
     on the last .do form after the session dies, so the URL never contains
-    'login'. Also treat the login form itself as logged-out."""
-    url = page.url
+    'login'. Also treat the login form and OTP screen as logged-out."""
+    url = (page.url or "").lower()
     if "smartdata.mastercard.co.in" not in url:
         return False
-    if "login" in url.lower():
+    if "login" in url or "one-time-passcode" in url:
         return False
     try:
         if page.locator(USER_ID_SELECTOR).count() > 0:
+            return False
+        if page.locator(f"#{OTP_BOX_IDS[0]}").count() > 0:
             return False
     except Exception:
         pass
@@ -56,11 +59,26 @@ def dismiss_cookie_banner(page: Page) -> None:
     )
 
 
+def ensure_on_login_form(page: Page) -> None:
+    """Wrong OTP often kicks Smart Data off the OTP screen back to a
+    blank shell or the User ID form. Get us onto the real login fields
+    before typing credentials. Do not use this while still on OTP --
+    that would request a new OTP unnecessarily."""
+    try:
+        if page.locator(USER_ID_SELECTOR).count() > 0:
+            return
+    except Exception:
+        pass
+    page.goto(LOGIN_START_URL, wait_until="domcontentloaded", timeout=30000)
+    page.wait_for_selector(USER_ID_SELECTOR, timeout=15000)
+
+
 def fill_and_submit_login(page: Page, username: str, password: str) -> None:
     # This is an Angular form -- .fill() sets the value directly without
     # firing the real keystroke events Angular needs to mark the form
     # valid/touched, leaving the Sign In button stuck disabled (same root
     # cause as the country-code combobox earlier). Type it out for real.
+    ensure_on_login_form(page)
     page.wait_for_selector(USER_ID_SELECTOR, timeout=10000)
     dismiss_cookie_banner(page)
     user_field = page.locator(USER_ID_SELECTOR)
@@ -145,20 +163,47 @@ def logout(page: Page) -> bool:
     return not is_logged_in(page)
 
 
+def classify_post_otp_state(page: Page) -> str:
+    """Where Smart Data landed after submitting an OTP.
+    logged_in / otp_still_showing / login_required / unknown."""
+    if is_logged_in(page):
+        return "logged_in"
+    if find_otp_field(page):
+        return "otp_still_showing"
+    try:
+        if page.locator(USER_ID_SELECTOR).count() > 0:
+            return "login_required"
+    except Exception:
+        pass
+    url = (page.url or "").lower()
+    if "login" in url and "one-time-passcode" not in url:
+        return "login_required"
+    return "unknown"
+
+
 def submit_otp(page: Page, otp: str) -> dict:
     digits = otp.strip()
     if len(digits) != 6 or not digits.isdigit():
         return {"status": "error", "message": "OTP must be exactly 6 digits."}
 
     if not find_otp_field(page):
+        # OTP screen already gone (previous wrong code kicked us back).
+        # Caller should re-run User ID + password instead of failing.
+        if classify_post_otp_state(page) == "login_required":
+            return {
+                "status": "login_required",
+                "message": "OTP screen is gone. Sign in again to get a new OTP.",
+            }
         debug_path = DEBUG_DIR / "debug_otp_not_found.png"
         page.screenshot(path=str(debug_path), full_page=True)
         return {
-            "status": "error",
-            "message": "OTP boxes not found on the page.",
+            "status": "login_required",
+            "message": "OTP boxes not found -- will sign in again for a new OTP.",
             "debug": str(debug_path),
         }
 
+    for box_id in OTP_BOX_IDS:
+        page.fill(f"#{box_id}", "")
     for box_id, digit in zip(OTP_BOX_IDS, digits):
         page.fill(f"#{box_id}", digit)
 
@@ -166,10 +211,35 @@ def submit_otp(page: Page, otp: str) -> dict:
 
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
-        if is_logged_in(page):
+        state = classify_post_otp_state(page)
+        if state == "logged_in":
             return {"status": "logged_in", "url": page.url}
+        if state == "login_required":
+            return {
+                "status": "login_required",
+                "message": "That OTP was rejected and the login screen is showing again.",
+            }
         page.wait_for_timeout(400)
+
+    state = classify_post_otp_state(page)
+    if state == "logged_in":
+        return {"status": "logged_in", "url": page.url}
+    if state == "otp_still_showing":
+        return {
+            "status": "otp_invalid",
+            "message": "That OTP was not accepted. Enter a new 6-digit code.",
+        }
+    if state == "login_required":
+        return {
+            "status": "login_required",
+            "message": "That OTP was rejected and the login screen is showing again.",
+        }
 
     debug_path = DEBUG_DIR / "debug_otp_result.png"
     page.screenshot(path=str(debug_path), full_page=True)
-    return {"status": "still_pending", "url": page.url, "debug": str(debug_path)}
+    return {
+        "status": "login_required",
+        "message": "Main screen did not appear after OTP. Will sign in again.",
+        "url": page.url,
+        "debug": str(debug_path),
+    }

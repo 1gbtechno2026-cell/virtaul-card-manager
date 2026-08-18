@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { API_BASE } from './apiBase'
 import { downloadCardsExport } from './download'
 import { formatIndianNumber } from './numberWords'
+import ScreenLoader from './ScreenLoader'
 
 const BATCH_STATUS_LABEL = {
   running: 'Running...',
@@ -15,7 +16,7 @@ function DownloadPage({ token, onAuthExpired }) {
   const [dateTo, setDateTo] = useState('')
   const [search, setSearch] = useState('')
   const [cards, setCards] = useState([])
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [downloading, setDownloading] = useState(false)
   const [error, setError] = useState('')
   const [mongoConfigured, setMongoConfigured] = useState(true)
@@ -124,6 +125,12 @@ function DownloadPage({ token, onAuthExpired }) {
 
   return (
     <div className="page">
+      {loading && (
+        <ScreenLoader message="Loading history..." subtext="Fetching batches and cards from the database." />
+      )}
+      {(downloading || downloadingBatchId) && !loading && (
+        <ScreenLoader message="Preparing Excel..." subtext="Building the download from the database." />
+      )}
       <header className="hero">
         <div className="hero-icon">📦</div>
         <div className="hero-text">

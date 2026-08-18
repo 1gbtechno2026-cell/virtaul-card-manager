@@ -13,17 +13,20 @@
 }
 
 .page {
-  max-width: 1080px;
-  margin: 0 auto;
-  padding: 28px 20px 60px;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 24px 28px 40px;
   font-family: system-ui, sans-serif;
   color: var(--text);
+  box-sizing: border-box;
 }
 
 /* ---------- App Shell (sidebar layout) ---------- */
 .app-shell {
   display: flex;
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
   background: var(--bg);
   font-family: system-ui, sans-serif;
 }
@@ -31,11 +34,13 @@
 .sidebar {
   width: 220px;
   flex-shrink: 0;
+  height: 100vh;
   background: linear-gradient(180deg, #1e1b4b 0%, #4c1d95 100%);
   color: white;
   display: flex;
   flex-direction: column;
   padding: 22px 16px;
+  box-sizing: border-box;
 }
 
 .sidebar-brand {
@@ -109,7 +114,12 @@
 
 .app-content {
   flex: 1;
+  min-width: 0;
+  min-height: 0;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
 }
 
 /* ---------- Top Header ---------- */
@@ -120,6 +130,10 @@
   padding: 16px 28px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 20;
 }
 
 .top-header-title {
@@ -237,7 +251,8 @@
 /* Bank-select / ICICI-login pages render inline (below the header) once
    past the initial app login, instead of taking the full viewport. */
 .app-content .login-page {
-  min-height: 60vh;
+  min-height: 0;
+  flex: 1;
 }
 
 /* ---------- Hero ---------- */
@@ -283,9 +298,9 @@
 /* ---------- Layout ---------- */
 .layout {
   display: grid;
-  grid-template-columns: 1.3fr 1fr;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
   gap: 20px;
-  align-items: start;
+  align-items: stretch;
 }
 
 @media (max-width: 860px) {
@@ -297,9 +312,17 @@
 .panel {
   background: var(--panel);
   border-radius: 14px;
-  padding: 22px 24px;
+  padding: 22px 24px 28px;
   box-shadow: 0 4px 18px -8px rgba(31, 32, 40, 0.15);
   border: 1px solid var(--border);
+  min-width: 0;
+}
+
+.form-panel,
+.log-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .panel-title {
@@ -314,6 +337,10 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px 16px;
+}
+
+.row-full {
+  grid-column: 1 / -1;
 }
 
 @media (max-width: 520px) {
@@ -421,6 +448,53 @@
   }
 }
 
+.screen-loader {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(30, 27, 75, 0.48);
+  backdrop-filter: blur(5px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.screen-loader-card {
+  background: white;
+  border-radius: 16px;
+  padding: 32px 36px;
+  text-align: center;
+  min-width: 260px;
+  max-width: 360px;
+  box-shadow: 0 24px 50px -16px rgba(30, 27, 75, 0.45);
+}
+
+.screen-loader-ring {
+  display: block;
+  width: 42px;
+  height: 42px;
+  margin: 0 auto 16px;
+  border: 4px solid var(--border);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+.screen-loader-message {
+  margin: 0;
+  font-weight: 700;
+  color: var(--primary-dark);
+  font-size: 1.05rem;
+}
+
+.screen-loader-sub {
+  margin: 8px 0 0;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
 .error {
   color: var(--error);
   background: #fef2f2;
@@ -443,6 +517,7 @@
 
 .progress-wrap {
   margin-top: 14px;
+  padding-bottom: 4px;
 }
 
 .progress-track {
@@ -461,7 +536,8 @@
 
 .progress-text {
   display: block;
-  margin-top: 6px;
+  margin-top: 8px;
+  margin-bottom: 4px;
   font-size: 0.78rem;
   color: var(--text-muted);
 }
@@ -650,7 +726,9 @@
   font-family: 'SFMono-Regular', Consolas, monospace;
   font-size: 0.8rem;
   padding: 12px;
-  height: 320px;
+  flex: 1;
+  min-height: 280px;
+  height: auto;
   overflow-y: auto;
   white-space: pre-wrap;
   border-radius: 10px;

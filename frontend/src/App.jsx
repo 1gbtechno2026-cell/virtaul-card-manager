@@ -6,6 +6,7 @@ import DownloadPage from './DownloadPage'
 import { downloadCardsExport } from './download'
 import Header from './Header'
 import { formatIndianNumber, numberToIndianWords } from './numberWords'
+import ScreenLoader from './ScreenLoader'
 import Sidebar from './Sidebar'
 
 const AMOUNT_FIELDS = new Set(['min_transaction_amount', 'max_transaction_amount', 'cumulative_limit'])
@@ -170,12 +171,21 @@ function LoginPage({ onLogin }) {
 
         {error && <div className="error">{error}</div>}
       </form>
+      {submitting && (
+        <ScreenLoader message="Signing in..." subtext="Checking your credentials." />
+      )}
     </div>
   )
 }
 
 function IciciLoginPage({ token, onLoggedIn, onAuthExpired }) {
-  // checking-browser | form | submitting | otp | submitting-otp
+  // checking-browser | form | submitting | otp | submitting-otp | restarting-login
+  const ICICI_LOADER = {
+    'checking-browser': ['Starting browser...', 'Getting the Smart Data login page ready.'],
+    submitting: ['Signing in to Smart Data...', 'Filling User ID and password on the bank page.'],
+    'submitting-otp': ['Verifying OTP...', 'Checking the code with Smart Data.'],
+    'restarting-login': ['Signing in again...', 'Requesting a new OTP. Please wait.'],
+  }
   const [phase, setPhase] = useState('checking-browser')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -228,6 +238,57 @@ function IciciLoginPage({ token, onLoggedIn, onAuthExpired }) {
     return () => clearInterval(browserPollRef.current)
   }, [])
 
+  const requestOtpFromCredentials = async () => {
+    const res = await fetch(`${API_BASE}/icici-login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders },
+      body: JSON.stringify({ username, password }),
+    })
+    if (res.status === 401) {
+      onAuthExpired()
+      return null
+    }
+    const body = await res.json()
+    if (!res.ok) {
+      setError(body.error || 'Login failed.')
+      setPhase('form')
+      return null
+    }
+    if (body.status === 'logged_in') {
+      onLoggedIn()
+      return body
+    }
+    if (body.status === 'otp_required') {
+      setPhase('otp')
+      return body
+    }
+    setError('Could not confirm login -- check the browser window.')
+    setPhase('form')
+    return null
+  }
+
+  const restartLoginForNewOtp = async (reason) => {
+    if (!username || !password) {
+      setError(reason || 'OTP screen is gone. Sign in with User ID and password again.')
+      setPhase('form')
+      return
+    }
+    setOtp('')
+    setError(reason || 'OTP was rejected. Signing in again to send a new OTP...')
+    setPhase('restarting-login')
+    try {
+      const body = await requestOtpFromCredentials()
+      if (!body) return
+      if (body.status === 'otp_required') {
+        setError('Signed in again. Enter the new OTP sent to you.')
+        setPhase('otp')
+      }
+    } catch {
+      setError('Could not sign in again. Enter User ID and password.')
+      setPhase('form')
+    }
+  }
+
   const handleLoginSubmit = async (e) => {
     e.preventDefault()
     setError('')
@@ -252,30 +313,7 @@ function IciciLoginPage({ token, onLoggedIn, onAuthExpired }) {
     setPhase('submitting')
 
     try {
-      const res = await fetch(`${API_BASE}/icici-login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders },
-        body: JSON.stringify({ username, password }),
-      })
-      if (res.status === 401) {
-        onAuthExpired()
-        return
-      }
-      const body = await res.json()
-
-      if (!res.ok) {
-        setError(body.error || 'Login failed.')
-        setPhase('form')
-        return
-      }
-      if (body.status === 'logged_in') {
-        onLoggedIn()
-      } else if (body.status === 'otp_required') {
-        setPhase('otp')
-      } else {
-        setError('Could not confirm login -- check the browser window.')
-        setPhase('form')
-      }
+      await requestOtpFromCredentials()
     } catch {
       setError('Something went wrong talking to the backend. Please try again.')
       setPhase('form')
@@ -294,6 +332,7 @@ function IciciLoginPage({ token, onLoggedIn, onAuthExpired }) {
     const quickData = await quickCheck.json()
     if (!quickData.reachable) {
       setError('The browser closed -- please start over from the login step.')
+      setPhase('form')
       return
     }
 
@@ -318,30 +357,25 @@ function IciciLoginPage({ token, onLoggedIn, onAuthExpired }) {
       }
       if (body.status === 'logged_in') {
         onLoggedIn()
-      } else {
-        setError("OTP not accepted yet -- check the browser window and try again.")
-        setPhase('otp')
+        return
       }
+      if (body.status === 'otp_invalid') {
+        setOtp('')
+        setError(body.message || 'That OTP was not accepted. Enter a new 6-digit code.')
+        setPhase('otp')
+        return
+      }
+      // OTP screen gone and main screen never appeared -- re-run User ID + password.
+      await restartLoginForNewOtp(body.message)
     } catch {
       setError('Something went wrong talking to the backend. Please try again.')
       setPhase('otp')
     }
   }
 
-  if (phase === 'checking-browser') {
-    return (
-      <div className="login-page">
-        <div className="login-card">
-          <div className="hero-icon login-icon">🏦</div>
-          <h1>Starting browser...</h1>
-          <p className="hint">Getting the Smart Data login page ready.</p>
-          <span className="spinner spinner-dark" />
-        </div>
-      </div>
-    )
-  }
-
-  if (phase === 'otp' || phase === 'submitting-otp') {
+  if (phase === 'otp' || phase === 'submitting-otp' || phase === 'restarting-login') {
+    const busy = phase === 'submitting-otp' || phase === 'restarting-login'
+    const loader = ICICI_LOADER[phase]
     return (
       <div className="login-page">
         <form className="login-card" onSubmit={handleOtpSubmit}>
@@ -360,19 +394,30 @@ function IciciLoginPage({ token, onLoggedIn, onAuthExpired }) {
               value={otp}
               onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
               className="otp-input-field"
+              disabled={busy}
             />
           </div>
 
           <button
             type="submit"
             className="primary-btn login-btn"
-            disabled={phase === 'submitting-otp' || otp.length !== 6}
+            disabled={busy || otp.length !== 6}
           >
             {phase === 'submitting-otp' ? 'Verifying...' : 'Verify OTP'}
           </button>
 
+          <button
+            type="button"
+            className="secondary-btn login-btn"
+            disabled={busy}
+            onClick={() => restartLoginForNewOtp('Signing in again to send a new OTP...')}
+          >
+            OTP wrong? Sign in again
+          </button>
+
           {error && <div className="error">{error}</div>}
         </form>
+        {loader && <ScreenLoader message={loader[0]} subtext={loader[1]} />}
       </div>
     )
   }
@@ -410,6 +455,18 @@ function IciciLoginPage({ token, onLoggedIn, onAuthExpired }) {
 
         {error && <div className="error">{error}</div>}
       </form>
+      {phase === 'submitting' && (
+        <ScreenLoader
+          message={ICICI_LOADER.submitting[0]}
+          subtext={ICICI_LOADER.submitting[1]}
+        />
+      )}
+      {phase === 'checking-browser' && (
+        <ScreenLoader
+          message={ICICI_LOADER['checking-browser'][0]}
+          subtext={ICICI_LOADER['checking-browser'][1]}
+        />
+      )}
     </div>
   )
 }
@@ -468,6 +525,7 @@ function Dashboard({ token, bank, onAuthExpired, onBankSessionLost }) {
   const [error, setError] = useState('')
   const [showConfirm, setShowConfirm] = useState(false)
   const [cancelling, setCancelling] = useState(false)
+  const [configLoading, setConfigLoading] = useState(true)
   const statusPollRef = useRef(null)
   const browserPollRef = useRef(null)
   const logBoxRef = useRef(null)
@@ -512,6 +570,7 @@ function Dashboard({ token, bank, onAuthExpired, onBankSessionLost }) {
         setValues(data.values)
       })
       .catch(() => setError('Could not reach the backend at ' + API_BASE))
+      .finally(() => setConfigLoading(false))
 
     return () => {
       clearInterval(statusPollRef.current)
@@ -690,8 +749,20 @@ function Dashboard({ token, bank, onAuthExpired, onBankSessionLost }) {
   const progressPct =
     requestedCount > 0 ? Math.min(100, (completedCount / requestedCount) * 100) : 0
 
+  const blockingLoader =
+    configLoading
+      ? ['Loading form...', 'Fetching saved card details.']
+      : phase === 'launching'
+        ? ['Starting browser...', 'Connecting to the Smart Data session.']
+        : phase === 'waiting-login'
+          ? ['Waiting for bank login...', 'Finish signing in so card creation can start.']
+          : null
+
   return (
     <div className="page">
+      {blockingLoader && (
+        <ScreenLoader message={blockingLoader[0]} subtext={blockingLoader[1]} />
+      )}
       <header className="hero">
         <div className="hero-icon">💳</div>
         <div className="hero-text">
@@ -710,7 +781,10 @@ function Dashboard({ token, bank, onAuthExpired, onBankSessionLost }) {
           <h2 className="panel-title">Card Details</h2>
           <div className="grid">
             {fields.map(([key, label]) => (
-              <div className="row" key={key}>
+              <div
+                className={`row${key === 'description' || key === 'user_email' ? ' row-full' : ''}`}
+                key={key}
+              >
                 <label htmlFor={key}>{label}</label>
                 <input
                   id={key}

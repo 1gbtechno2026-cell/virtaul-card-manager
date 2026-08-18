@@ -2,9 +2,18 @@ body {
   margin: 0;
   font: 16px/1.45 system-ui, 'Segoe UI', Roboto, sans-serif;
   color: #222;
-  background: #fff;
+  background: #f5f3ff;
 }
 
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
 #root {
-  min-height: 100vh;
+  height: 100%;
+  margin: 0;
 }
