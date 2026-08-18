@@ -22,6 +22,14 @@ from db import save_card
 from icici_login import is_logged_in
 
 MAX_FILL_RETRIES = 2
+MAX_CARD_ATTEMPTS = 3
+NAV_CLICK_TIMEOUT = 20000
+HEADER_IFRAME_SELECTOR = "iframe[src*='smart-data-header-ui']"
+# Direct GWT form URL -- NOT the SPA root (that drops the session).
+CREATE_FORM_URL = (
+    "https://smartdata.mastercard.co.in/sdpc/purchaserequest/"
+    "createPurchaseRequestRender.do"
+)
 
 CONFIG_PATH = Path(__file__).parent / "config.json"
 DEBUG_PORT = 9222
@@ -77,35 +85,200 @@ def find_country_code_field_id(page) -> str:
     return field_id
 
 
-def navigate_and_fill_form(page, cfg: dict) -> None:
-    """Everything up to (not including) the Submit click. Nothing here
-    has touched Mastercard's servers in a way that creates a card, so
-    it's safe for create_one_card() to retry this on a timeout."""
-    # Always start scrolled to top -- a scrolled-down leftover page can
-    # hide the (non-sticky) header. Do NOT page.goto() here: this is an
-    # SPA and a full navigation to the bare root URL drops the session
-    # (confirmed the hard way -- it redirects to a login page).
-    page.evaluate("window.scrollTo(0, 0)")
-    page.wait_for_timeout(300)
+def dump_page_frames(page, log=print) -> None:
+    """Log every frame URL plus raw <iframe> srcs so a nav timeout is
+    diagnosable without the screenshot (header missing vs still loading
+    vs session sent us somewhere else)."""
+    log(f"  Current URL: {page.url}")
+    log(f"  Playwright frame count: {len(page.frames)}")
+    for i, frame in enumerate(page.frames):
+        log(f"    frame[{i}] name={frame.name!r} url={frame.url}")
+    try:
+        iframe_count = page.locator(HEADER_IFRAME_SELECTOR).count()
+        log(f"  Header iframe matches: {iframe_count}")
+        srcs = page.locator("iframe").evaluate_all(
+            "els => els.map(e => e.getAttribute('src') || e.id || e.name || '')"
+        )
+        log(f"  <iframe> srcs: {srcs}")
+    except Exception as e:
+        log(f"  Could not list <iframe> elements: {e}")
 
-    # The real nav bar lives inside this iframe (the same element in the
-    # main page is a zero-size legacy leftover) -- confirmed via diagnose.py.
-    header = page.frame_locator("iframe[src*='smart-data-header-ui']")
 
-    header.get_by_text("Payment Control", exact=True).click(timeout=10000)
+def dismiss_session_dialogs(page) -> None:
+    """Bank session-warning modals sit on top of the header and make
+    Payment Control unclickable. Only click clearly session-related
+    buttons -- a generic OK could submit the card form. count() first so
+    the happy path doesn't wait 800ms per name."""
+    names = (
+        "Stay Logged In",
+        "Continue Session",
+        "Extend Session",
+        "Keep me signed in",
+    )
+    for name in names:
+        loc = page.get_by_role("button", name=name, exact=False)
+        try:
+            if loc.count() == 0:
+                continue
+            loc.first.click(timeout=800)
+            return
+        except Exception:
+            continue
+    try:
+        header = page.frame_locator(HEADER_IFRAME_SELECTOR).last
+        loc = header.get_by_role("button", name="Continue Session", exact=False)
+        if loc.count() > 0:
+            loc.first.click(timeout=800)
+    except Exception:
+        pass
+
+
+def wait_for_header_iframe(page, timeout_ms: int = 15000) -> bool:
+    """True if a header iframe attaches. Use .last so leftover iframes
+    from earlier navigations don't make the locator wait for uniqueness
+    (Playwright frame_locator is strict -- 2+ matches look like a timeout)."""
+    try:
+        page.locator(HEADER_IFRAME_SELECTOR).last.wait_for(
+            state="attached", timeout=timeout_ms
+        )
+        return True
+    except PlaywrightTimeoutError:
+        return False
+
+
+def click_text_anywhere(page, text: str, timeout_ms: int = 8000) -> None:
+    """Click exact text in the newest header iframe, then any frame, then
+    the main page. Raises PlaywrightTimeoutError if nothing matched."""
+    if page.locator(HEADER_IFRAME_SELECTOR).count() > 0:
+        header = page.frame_locator(HEADER_IFRAME_SELECTOR).last
+        try:
+            header.get_by_text(text, exact=True).click(timeout=timeout_ms)
+            return
+        except PlaywrightTimeoutError:
+            pass
+
+    for frame in page.frames:
+        try:
+            loc = frame.get_by_text(text, exact=True)
+            if loc.count() == 0:
+                continue
+            loc.first.click(timeout=min(timeout_ms, 5000))
+            return
+        except Exception:
+            continue
+
+    loc = page.get_by_text(text, exact=True)
+    loc.first.click(timeout=timeout_ms)
+
+
+def open_create_form_via_header_menu(page) -> None:
+    """The real nav bar lives inside the header iframe (the same labels
+    in the main page are a zero-size legacy leftover). .last = newest
+    iframe after many card navigations."""
+    header = page.frame_locator(HEADER_IFRAME_SELECTOR).last
+    header.get_by_text("Payment Control", exact=True).click(timeout=NAV_CLICK_TIMEOUT)
     page.wait_for_timeout(500)
-    header.get_by_text("Purchase Requests", exact=True).click(timeout=10000)
+    header.get_by_text("Purchase Requests", exact=True).click(timeout=NAV_CLICK_TIMEOUT)
     page.wait_for_timeout(500)
     try:
         # This click navigates the *parent* page away from the iframe
         # that initiated it, which can hang the click call itself even
         # though the navigation succeeds -- confirmed by watching the URL
         # change on a "failed" run. Safe to ignore.
-        header.get_by_text("Create Single Request", exact=True).click(timeout=10000)
+        header.get_by_text("Create Single Request", exact=True).click(
+            timeout=NAV_CLICK_TIMEOUT
+        )
     except PlaywrightTimeoutError:
         pass
 
-    page.wait_for_selector("#description", timeout=15000)
+
+def open_create_form_via_any_frame(page) -> None:
+    click_text_anywhere(page, "Payment Control", timeout_ms=NAV_CLICK_TIMEOUT)
+    page.wait_for_timeout(500)
+    click_text_anywhere(page, "Purchase Requests", timeout_ms=NAV_CLICK_TIMEOUT)
+    page.wait_for_timeout(500)
+    try:
+        click_text_anywhere(page, "Create Single Request", timeout_ms=NAV_CLICK_TIMEOUT)
+    except PlaywrightTimeoutError:
+        pass
+
+
+def wait_for_fresh_form(page, timeout_ms: int = 15000) -> None:
+    """A leftover confirmation from the previous card still has
+    #description. Filling that screen again would resubmit the same
+    request and re-read the same card number -- wait until confirmation
+    is gone."""
+    page.wait_for_selector(FIELD_IDS["description"], timeout=timeout_ms)
+    card_number = page.locator("#cardNumberLabel")
+    try:
+        if card_number.count() > 0:
+            card_number.wait_for(state="hidden", timeout=min(8000, timeout_ms))
+    except PlaywrightTimeoutError:
+        raise PlaywrightTimeoutError(
+            "Create form is showing but the previous card's confirmation "
+            "is still visible -- not a fresh form"
+        )
+
+
+def raise_if_logged_out() -> None:
+    raise RuntimeError("Session expired mid-batch -- logged out of Smart Data.")
+
+
+def open_create_form(page, log=print) -> None:
+    """Get a fresh Create Single Request form. Header-menu first; if the
+    iframe is missing or dead, dump frames and recover in-page rather
+    than aborting the batch. Do NOT goto() the SPA root -- that drops
+    the session."""
+    page.evaluate("window.scrollTo(0, 0)")
+    page.wait_for_timeout(300)
+    dismiss_session_dialogs(page)
+
+    if not is_logged_in(page):
+        dump_page_frames(page, log)
+        raise_if_logged_out()
+
+    iframe_found = wait_for_header_iframe(page, timeout_ms=15000)
+    if not iframe_found:
+        log("  Header iframe not attached -- dumping frames and trying fallbacks")
+        dump_page_frames(page, log)
+        if not is_logged_in(page):
+            raise_if_logged_out()
+    else:
+        try:
+            open_create_form_via_header_menu(page)
+            wait_for_fresh_form(page)
+            return
+        except PlaywrightTimeoutError:
+            log("  Header menu path timed out -- dumping frames, trying in-page fallback")
+            dump_page_frames(page, log)
+
+    if not is_logged_in(page):
+        raise_if_logged_out()
+
+    try:
+        log("  Trying Payment Control / Purchase Requests in any frame")
+        open_create_form_via_any_frame(page)
+        wait_for_fresh_form(page)
+        return
+    except PlaywrightTimeoutError:
+        log("  In-page menu fallback timed out")
+
+    if not is_logged_in(page):
+        raise_if_logged_out()
+
+    log("  Opening a fresh create form via direct URL (session still looks valid)")
+    page.goto(CREATE_FORM_URL, wait_until="domcontentloaded", timeout=30000)
+    if not is_logged_in(page):
+        dump_page_frames(page, log)
+        raise_if_logged_out()
+    wait_for_fresh_form(page, timeout_ms=20000)
+
+
+def navigate_and_fill_form(page, cfg: dict, log=print) -> None:
+    """Everything up to (not including) the Submit click. Nothing here
+    has touched Mastercard's servers in a way that creates a card, so
+    it's safe for create_one_card() to retry this on a timeout."""
+    open_create_form(page, log=log)
 
     page.fill(FIELD_IDS["description"], cfg["description"])
     page.fill(FIELD_IDS["min_transaction_amount"], cfg["min_transaction_amount"])
@@ -177,17 +350,16 @@ def create_one_card(page, cfg: dict, log=print) -> dict:
     is never retried (see submit_and_read_result)."""
     for attempt in range(1, MAX_FILL_RETRIES + 2):
         try:
-            navigate_and_fill_form(page, cfg)
+            navigate_and_fill_form(page, cfg, log=log)
             break
         except PlaywrightTimeoutError:
+            dump_page_frames(page, log)
             if not is_logged_in(page):
-                raise RuntimeError(
-                    "Session expired mid-batch -- logged out of Smart Data."
-                ) from None
+                raise_if_logged_out()
             if attempt > MAX_FILL_RETRIES:
                 raise
             log(f"  Form step timed out (attempt {attempt}/{MAX_FILL_RETRIES + 1}) -- retrying...")
-            page.wait_for_timeout(2000)
+            page.wait_for_timeout(3000)
 
     return submit_and_read_result(page, cfg)
 
@@ -230,7 +402,30 @@ def run_batch(cfg: dict, count: int, batch_id: str | None = None, log=print, sho
                     log(f"Cancelled -- created {i}/{count} card(s) before stopping.")
                     break
                 log(f"Creating card {i + 1}/{count}...")
-                details = create_one_card(page, cfg, log=log)
+                details = None
+                last_error = None
+                for card_attempt in range(1, MAX_CARD_ATTEMPTS + 1):
+                    try:
+                        details = create_one_card(page, cfg, log=log)
+                        last_error = None
+                        break
+                    except RuntimeError:
+                        dump_page_frames(page, log)
+                        raise
+                    except Exception as e:
+                        last_error = e
+                        dump_page_frames(page, log)
+                        if not is_logged_in(page):
+                            raise_if_logged_out()
+                        if card_attempt >= MAX_CARD_ATTEMPTS:
+                            raise
+                        log(
+                            f"  Card {i + 1} failed ({e}) -- retrying "
+                            f"({card_attempt}/{MAX_CARD_ATTEMPTS}) without closing the browser"
+                        )
+                        page.wait_for_timeout(5000)
+                if last_error or details is None:
+                    raise last_error or RuntimeError("Card creation failed with no details")
                 save_card(details, batch_id=batch_id)
                 results.append(details)
                 log(f"  -> {details['card_number']} saved to database")
@@ -239,6 +434,7 @@ def run_batch(cfg: dict, count: int, batch_id: str | None = None, log=print, sho
             page.screenshot(path=str(debug_path), full_page=True)
             log(f"Error occurred -- saved screenshot to {debug_path}")
             log(f"Current URL: {page.url}")
+            dump_page_frames(page, log)
             raise
 
         # Don't close context/browser -- it's shared/long-lived, owned by launch_browser.py

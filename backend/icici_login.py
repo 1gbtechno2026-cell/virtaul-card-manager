@@ -21,8 +21,20 @@ DEBUG_DIR = Path(__file__).parent
 
 
 def is_logged_in(page: Page) -> bool:
+    """URL-only checks miss a common failure mode: Smart Data leaves you
+    on the last .do form after the session dies, so the URL never contains
+    'login'. Also treat the login form itself as logged-out."""
     url = page.url
-    return "smartdata.mastercard.co.in" in url and "login" not in url
+    if "smartdata.mastercard.co.in" not in url:
+        return False
+    if "login" in url.lower():
+        return False
+    try:
+        if page.locator(USER_ID_SELECTOR).count() > 0:
+            return False
+    except Exception:
+        pass
+    return True
 
 
 def dismiss_cookie_banner(page: Page) -> None:
@@ -114,7 +126,7 @@ def logout(page: Page) -> bool:
     if not is_logged_in(page):
         return True
 
-    header = page.frame_locator("iframe[src*='smart-data-header-ui']")
+    header = page.frame_locator("iframe[src*='smart-data-header-ui']").last
     candidates = [
         lambda: header.get_by_text("Logout", exact=False).click(timeout=3000),
         lambda: header.get_by_text("Sign Out", exact=False).click(timeout=3000),
