@@ -36,34 +36,33 @@ function AmountHint({ value }) {
   )
 }
 
-function CardTile({ card }) {
+function CardsTable({ cards }) {
   return (
-    <div className="card-tile">
-      <div className="card-tile-top">
-        <span className="card-tile-brand">mastercard</span>
-        <span className="card-tile-chip" />
-      </div>
-      <div className="card-tile-number">
-        {(card.card_number || '').replace(/(.{4})/g, '$1 ').trim()}
-      </div>
-      <div className="card-tile-bottom">
-        <div>
-          <div className="card-tile-label">Card Holder</div>
-          <div className="card-tile-value">{card.billing_name || '—'}</div>
-        </div>
-        <div>
-          <div className="card-tile-label">Expires</div>
-          <div className="card-tile-value">{card.expiry || '—'}</div>
-        </div>
-        <div>
-          <div className="card-tile-label">CVC</div>
-          <div className="card-tile-value">{card.cvc || '—'}</div>
-        </div>
-      </div>
-      <div className="card-tile-footer">
-        <span>{card.card_alias}</span>
-        <span>₹{formatIndianNumber(card.card_amount)}</span>
-      </div>
+    <div className="table-wrap">
+      <table className="cards-table">
+        <thead>
+          <tr>
+            <th>Card Alias</th>
+            <th>Card Number</th>
+            <th>Amount</th>
+            <th>Expiry</th>
+            <th>CVC</th>
+            <th>Card Holder</th>
+          </tr>
+        </thead>
+        <tbody>
+          {cards.map((card, i) => (
+            <tr key={i}>
+              <td>{card.card_alias || '—'}</td>
+              <td className="mono">{card.card_number || '—'}</td>
+              <td>₹{formatIndianNumber(card.card_amount)}</td>
+              <td>{card.expiry || '—'}</td>
+              <td>{card.cvc || '—'}</td>
+              <td>{card.billing_name || '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }
@@ -876,11 +875,7 @@ function Dashboard({ token, bank, onAuthExpired, onBankSessionLost }) {
       {results.length > 0 && (
         <div className="results-section">
           <h2 className="panel-title">Created Cards</h2>
-          <div className="results-grid">
-            {results.map((card, i) => (
-              <CardTile card={card} key={i} />
-            ))}
-          </div>
+          <CardsTable cards={results} />
         </div>
       )}
 

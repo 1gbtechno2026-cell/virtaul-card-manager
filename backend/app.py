@@ -337,6 +337,10 @@ def icici_login_endpoint():
             return jsonify({"status": "logged_in", "url": page.url})
         if result == "otp_required":
             return jsonify({"status": "otp_required"})
+        if result == "invalid_login":
+            return jsonify(
+                {"error": "Invalid User ID or password -- the bank rejected these credentials."}
+            ), 401
 
         debug_path = BASE_DIR / "debug_login_result.png"
         page.screenshot(path=str(debug_path), full_page=True)

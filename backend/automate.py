@@ -12,6 +12,7 @@ Usage:
 
 import argparse
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -55,6 +56,15 @@ FIELD_IDS = {
     "user_email": "#userDetailsEmailAddressTextBox",
     "user_mobile_number": "#userDetailsPhoneNumberTextBox",
 }
+
+
+def extract_dial_code(value: str) -> str:
+    """Pulls the trailing digits (e.g. '91') out of a country-code value
+    that might be saved as just those digits ('91') or the full
+    autocomplete label ('India +91') -- used as a fallback match when the
+    saved value doesn't exactly equal the widget's data-text."""
+    match = re.search(r"(\d+)\s*$", value.strip())
+    return match.group(1) if match else value.strip()
 
 
 def find_country_code_field_id(page) -> str:
@@ -334,7 +344,17 @@ def navigate_and_fill_form(page, cfg: dict, log=print) -> None:
     country_code_field.fill("")
     country_code_field.press_sequentially(cfg["user_country_code"], delay=80)
     country_code_option = page.locator(f"li[data-text='{cfg['user_country_code']}']")
-    country_code_option.wait_for(state="visible", timeout=8000)
+    try:
+        country_code_option.wait_for(state="visible", timeout=6000)
+    except PlaywrightTimeoutError:
+        # Saved value might be just digits ("91") rather than the full
+        # autocomplete label the widget's data-text actually holds
+        # ("India +91") -- fall back to matching by trailing dial code
+        # (e.g. data-text ending in "+91") so a saved value in the wrong
+        # format doesn't fail the whole batch.
+        dial_code = extract_dial_code(cfg["user_country_code"])
+        country_code_option = page.locator(f"li[data-text$='+{dial_code}']")
+        country_code_option.wait_for(state="visible", timeout=6000)
     country_code_option.click(timeout=5000)
 
     page.fill(FIELD_IDS["user_mobile_number"], cfg["user_mobile_number"])

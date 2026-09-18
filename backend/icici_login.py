@@ -99,18 +99,31 @@ def fill_and_submit_login(page: Page, username: str, password: str) -> None:
     page.get_by_role("button", name="Sign In", exact=True).click()
 
 
+def find_invalid_login_banner(page: Page) -> bool:
+    """True if Smart Data's "Invalid Login" rejection banner is showing
+    (wrong User ID/password) -- distinct from 'unknown' so the frontend
+    can tell you the bank rejected your credentials instead of a generic
+    "could not confirm login" message."""
+    try:
+        return page.get_by_text("Invalid Login", exact=False).count() > 0
+    except Exception:
+        return False
+
+
 def wait_for_post_login_state(page: Page, timeout_ms: int = 15000) -> str:
     """After clicking Sign In, the button visibly goes into a disabled
     "processing" state before the real navigation happens -- checking
     once, right away, can catch it mid-transition and wrongly conclude
     nothing happened. Poll instead of trusting a single fixed wait.
-    Returns 'logged_in', 'otp_required', or 'unknown'."""
+    Returns 'logged_in', 'otp_required', 'invalid_login', or 'unknown'."""
     deadline = time.monotonic() + (timeout_ms / 1000)
     while time.monotonic() < deadline:
         if is_logged_in(page):
             return "logged_in"
         if find_otp_field(page):
             return "otp_required"
+        if find_invalid_login_banner(page):
+            return "invalid_login"
         page.wait_for_timeout(400)
     return "unknown"
 

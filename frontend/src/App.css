@@ -589,6 +589,15 @@
 
 .table-wrap {
   overflow-x: auto;
+  overflow-y: auto;
+  max-height: 480px;
+}
+
+.table-wrap thead th {
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  z-index: 1;
 }
 
 .cards-table {
@@ -728,6 +737,7 @@
   padding: 12px;
   flex: 1;
   min-height: 280px;
+  max-height: 480px;
   height: auto;
   overflow-y: auto;
   white-space: pre-wrap;
@@ -754,90 +764,6 @@
 /* ---------- Results ---------- */
 .results-section {
   margin-top: 28px;
-}
-
-.results-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 18px;
-}
-
-.card-tile {
-  background: linear-gradient(135deg, #1e1b4b 0%, #4c1d95 55%, #6d28d9 100%);
-  color: white;
-  border-radius: 16px;
-  padding: 20px;
-  position: relative;
-  overflow: hidden;
-  box-shadow: 0 12px 28px -10px rgba(76, 29, 149, 0.55);
-}
-
-.card-tile::after {
-  content: '';
-  position: absolute;
-  width: 180px;
-  height: 180px;
-  background: radial-gradient(circle, rgba(255, 255, 255, 0.12) 0%, transparent 70%);
-  top: -60px;
-  right: -60px;
-  border-radius: 50%;
-}
-
-.card-tile-top {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 22px;
-}
-
-.card-tile-brand {
-  font-style: italic;
-  font-weight: 700;
-  font-size: 0.95rem;
-  letter-spacing: 0.5px;
-  text-transform: lowercase;
-}
-
-.card-tile-chip {
-  width: 32px;
-  height: 24px;
-  border-radius: 5px;
-  background: linear-gradient(135deg, #fde68a, #fbbf24);
-}
-
-.card-tile-number {
-  font-size: 1.15rem;
-  letter-spacing: 2px;
-  font-family: 'SFMono-Regular', Consolas, monospace;
-  margin-bottom: 20px;
-}
-
-.card-tile-bottom {
-  display: flex;
-  gap: 18px;
-  margin-bottom: 14px;
-}
-
-.card-tile-label {
-  font-size: 0.62rem;
-  text-transform: uppercase;
-  opacity: 0.7;
-  letter-spacing: 0.5px;
-}
-
-.card-tile-value {
-  font-size: 0.85rem;
-  font-weight: 600;
-  margin-top: 2px;
-}
-
-.card-tile-footer {
-  display: flex;
-  justify-content: space-between;
-  font-size: 0.78rem;
-  opacity: 0.85;
-  border-top: 1px solid rgba(255, 255, 255, 0.15);
-  padding-top: 10px;
 }
 
 /* ---------- Login ---------- */

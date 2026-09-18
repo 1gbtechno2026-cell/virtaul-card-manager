@@ -43,6 +43,9 @@ def get_collection():
         if _client is None:
             _client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
         _collection = _client[MONGODB_DB_NAME][COLLECTION_NAME]
+        # Without this, sorting by created_at (get_all_cards) fails once
+        # the collection grows past MongoDB's 32MB in-memory sort limit.
+        _collection.create_index([("created_at", -1)])
 
     return _collection
 
