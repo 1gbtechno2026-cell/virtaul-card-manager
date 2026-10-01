@@ -265,7 +265,6 @@ def open_create_form(page, log=print) -> None:
     from the SPA shell (first card). Do NOT goto() the SPA root -- that
     drops the session."""
     page.evaluate("window.scrollTo(0, 0)")
-    page.wait_for_timeout(300)
     dismiss_session_dialogs(page)
 
     if not is_logged_in(page):
@@ -342,7 +341,7 @@ def navigate_and_fill_form(page, cfg: dict, log=print) -> None:
     country_code_field = page.locator(f"#{country_code_id}")
     country_code_field.click()
     country_code_field.fill("")
-    country_code_field.press_sequentially(cfg["user_country_code"], delay=80)
+    country_code_field.press_sequentially(cfg["user_country_code"], delay=30)
     country_code_option = page.locator(f"li[data-text='{cfg['user_country_code']}']")
     try:
         country_code_option.wait_for(state="visible", timeout=6000)
@@ -407,19 +406,31 @@ def create_one_card(page, cfg: dict, log=print) -> dict:
             if attempt > MAX_FILL_RETRIES:
                 raise
             log(f"  Form step timed out (attempt {attempt}/{MAX_FILL_RETRIES + 1}) -- retrying...")
-            page.wait_for_timeout(3000)
+            page.wait_for_timeout(1500)
 
     return submit_and_read_result(page, cfg)
 
 
-def run_batch(cfg: dict, count: int, batch_id: str | None = None, log=print, should_cancel=None) -> list:
+def run_batch(
+    cfg: dict,
+    count: int,
+    batch_id: str | None = None,
+    log=print,
+    should_cancel=None,
+    on_card=None,
+) -> list:
     """Attaches to the browser launched by launch_browser.py and creates
     `count` cards using field values from `cfg`. Calls log(message) for
     each progress update. If should_cancel() returns True, stops before
     starting the next card (already-created cards are kept). Returns the
     list of created card detail dicts. Reusable by both the CLI (main())
     and gui.py. batch_id (if given) is stamped onto every saved card so
-    they can be queried/downloaded as one group later."""
+    they can be queried/downloaded as one group later. on_card(details),
+    if given, is called right after each card is saved -- lets the caller
+    track progress incrementally instead of only getting results from the
+    return value, which is never reached if a later card raises (e.g. the
+    bank session expiring at card 6000 of 10000 shouldn't erase the first
+    6000 from view just because this function exits via an exception)."""
     cfg = dict(cfg)
     cfg.setdefault("start_date", datetime.now().strftime("%d/%m/%Y"))
     cfg.setdefault("end_date", datetime.now().strftime("%d/%m/%Y"))
@@ -471,11 +482,13 @@ def run_batch(cfg: dict, count: int, batch_id: str | None = None, log=print, sho
                             f"  Card {i + 1} failed ({e}) -- retrying "
                             f"({card_attempt}/{MAX_CARD_ATTEMPTS}) without closing the browser"
                         )
-                        page.wait_for_timeout(5000)
+                        page.wait_for_timeout(2500)
                 if last_error or details is None:
                     raise last_error or RuntimeError("Card creation failed with no details")
                 save_card(details, batch_id=batch_id)
                 results.append(details)
+                if on_card:
+                    on_card(details)
                 log(f"  -> {details['card_number']} saved to database")
         except Exception:
             debug_path = Path(__file__).parent / "debug_error.png"

@@ -21,14 +21,17 @@ Usage:
 Run this once and leave it running. automate.py/app.py attach to it via CDP.
 """
 
+import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 PROFILE_DIR = Path(__file__).parent / "chrome-profile"
 PID_PATH = Path(__file__).parent / "chrome.pid"
 DEBUG_PORT = 9222
 START_URL = "https://smartdata.mastercard.co.in/"
+LAUNCH_ATTEMPTS = 3
 
 CHROME_CANDIDATES = [
     # Windows
@@ -54,6 +57,23 @@ def find_chrome() -> str:
     )
 
 
+def debug_port_reachable(timeout_s: float = 0.5) -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", DEBUG_PORT), timeout=timeout_s):
+            return True
+    except OSError:
+        return False
+
+
+def wait_briefly_for_port(timeout_s: float = 6.0) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if debug_port_reachable():
+            return True
+        time.sleep(0.3)
+    return False
+
+
 def main() -> None:
     PROFILE_DIR.mkdir(exist_ok=True)
     chrome_path = find_chrome()
@@ -73,12 +93,33 @@ def main() -> None:
         START_URL,
     ]
 
-    proc = subprocess.Popen(args)
-    print(f"Headless Chrome launched (pid={proc.pid}), remote debugging on port {DEBUG_PORT}.")
-    # Written so app.py can kill this exact process later (see
-    # close_browser_session() in app.py) -- killing this wrapper script
-    # alone does not kill Chrome, since nothing here forwards signals to it.
-    PID_PATH.write_text(str(proc.pid))
+    proc = None
+    for attempt in range(1, LAUNCH_ATTEMPTS + 1):
+        proc = subprocess.Popen(args)
+        print(f"Headless Chrome launched (pid={proc.pid}), remote debugging on port {DEBUG_PORT}.")
+        # Written so app.py can kill this exact process later (see
+        # close_browser_session() in app.py) -- killing this wrapper script
+        # alone does not kill Chrome, since nothing here forwards signals to it.
+        PID_PATH.write_text(str(proc.pid))
+
+        if wait_briefly_for_port():
+            break
+
+        # Chrome can lose a race for its own profile lock if the previous
+        # instance's shutdown (SIGTERM from close_browser_session()) hadn't
+        # fully released chrome-profile/ yet, and exits almost immediately
+        # without ever opening the debug port. Previously this left the
+        # app stuck polling /browser-status forever with no way to recover
+        # short of manually relaunching. Retry instead.
+        if proc.poll() is not None and attempt < LAUNCH_ATTEMPTS:
+            print(
+                f"Chrome exited before the debug port came up "
+                f"(attempt {attempt}/{LAUNCH_ATTEMPTS}) -- retrying..."
+            )
+            PID_PATH.unlink(missing_ok=True)
+            time.sleep(2)
+            continue
+        break
 
     try:
         proc.wait()

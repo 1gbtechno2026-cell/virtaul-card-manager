@@ -1,8 +1,8 @@
 """
-Flask API for the Virtual Card Creator. Runs at http://localhost:5000.
+Flask API for the Virtual Card Creator. Runs at http://localhost:8800.
 
 In local dev, this is the backend only -- the React app runs separately
-via `npm run dev` (http://localhost:5173+) and talks to this API across
+via `npm run dev` (http://localhost:3000+) and talks to this API across
 origins (see frontend/.env.development and CORS below).
 
 In production, this ALSO serves the built React app (frontend/dist/) as
@@ -226,10 +226,24 @@ def is_cancel_requested() -> bool:
 def worker(cfg: dict, count: int, batch_id: str) -> None:
     status = "completed"
     error = None
-    try:
-        results = run_batch(cfg, count, batch_id, log=append_log, should_cancel=is_cancel_requested)
+
+    def on_card(details: dict) -> None:
+        # Pushed as each card finishes, not just once at the end -- so a
+        # mid-batch failure (e.g. the bank session expiring 6000 cards
+        # into a 10000-card run) doesn't wipe the "Created Cards" view
+        # for the cards that genuinely succeeded before that point.
         with state_lock:
-            state["results"].extend(results)
+            state["results"].append(details)
+
+    try:
+        results = run_batch(
+            cfg,
+            count,
+            batch_id,
+            log=append_log,
+            should_cancel=is_cancel_requested,
+            on_card=on_card,
+        )
         if len(results) < count:
             status = "cancelled"
             append_log(f"Cancelled. Created {len(results)}/{count} card(s). Saved to the database.")
@@ -238,7 +252,9 @@ def worker(cfg: dict, count: int, batch_id: str) -> None:
     except Exception as e:
         status = "failed"
         error = str(e)
-        append_log(f"Failed: {e}")
+        with state_lock:
+            created_so_far = len(state["results"])
+        append_log(f"Failed after {created_so_far}/{count} card(s): {e}")
     finally:
         # Runs on every outcome -- success, failure, or cancellation --
         # so no live bank session is ever left open unattended. Logged
@@ -546,4 +562,4 @@ ensure_browser_launched()
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, debug=False)
+    app.run(host="127.0.0.1", port=8800, debug=False)
