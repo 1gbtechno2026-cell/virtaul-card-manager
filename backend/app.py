@@ -37,6 +37,7 @@ from db import (
     finish_batch,
     get_all_batches,
     get_all_cards,
+    increment_batch_count,
     is_configured as mongo_is_configured,
     is_connected as mongo_is_connected,
 )
@@ -234,6 +235,12 @@ def worker(cfg: dict, count: int, batch_id: str) -> None:
         # for the cards that genuinely succeeded before that point.
         with state_lock:
             state["results"].append(details)
+        # Keeps the Download tab's batches table showing live progress
+        # (e.g. 6000/10000) instead of frozen at 0 until the batch ends.
+        try:
+            increment_batch_count(batch_id)
+        except Exception as e:
+            append_log(f"Warning: could not update live batch progress: {e}")
 
     try:
         results = run_batch(

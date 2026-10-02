@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { API_BASE } from './apiBase'
 import ScreenLoader from './ScreenLoader'
 
-const LINE_COLOR = '#6d28d9' // var(--primary) -- single series, title names it, no legend needed
+const LINE_COLOR = '#0d9488' // var(--accent) -- single series, title names it, no legend needed
 
 function buildDailySeries(cards) {
   if (cards.length === 0) return []

@@ -129,6 +129,23 @@ def create_batch(description: str, created_by: str, requested_count: int) -> str
     return str(result.inserted_id)
 
 
+def increment_batch_count(batch_id: str | None) -> None:
+    """Bumps a running batch's created_count by 1 -- called right after
+    each card is saved so the Download tab's batches table can show live
+    progress (e.g. 6000/10000) instead of staying at 0 until the whole
+    batch finishes and finish_batch() recomputes the real total. No-op
+    if Mongo isn't configured or batch_id is falsy."""
+    if not batch_id:
+        return
+    collection = get_batches_collection()
+    if collection is None:
+        return
+
+    from bson import ObjectId
+
+    collection.update_one({"_id": ObjectId(batch_id)}, {"$inc": {"created_count": 1}})
+
+
 def finish_batch(batch_id: str, status: str, error: str | None = None) -> None:
     """Finalizes a batch record. created_count is computed by counting
     actual `cards` documents for this batch_id rather than trusting a

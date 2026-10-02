@@ -12,6 +12,7 @@ Usage:
 
 import argparse
 import json
+import random
 import re
 from datetime import datetime
 from pathlib import Path
@@ -245,13 +246,64 @@ def raise_if_logged_out() -> None:
     raise RuntimeError("Session expired mid-batch -- logged out of Smart Data.")
 
 
+def is_network_error_page(page) -> bool:
+    """True if Chrome is showing its own network-error interstitial
+    (chrome-error://...) instead of any real response from the bank --
+    e.g. net::ERR_HTTP_RESPONSE_CODE_FAILURE, a connection reset, a DNS
+    hiccup. Seen in production from a VPS's datacenter IP after hundreds
+    of rapid identical requests -- almost certainly the bank's WAF or
+    rate-limiting briefly rejecting the request, not a real logout."""
+    return (page.url or "").startswith("chrome-error://")
+
+
+def recover_from_network_error(page, log=print, max_attempts: int = 3) -> bool:
+    """Backs off and retries loading the create form a few times after
+    landing on a chrome-error:// page. This is NOT the same situation as
+    being logged out -- treating it as one (the old behavior) killed the
+    entire remaining batch on the very first transient network/WAF
+    hiccup, without ever using the normal per-card retry budget. WAF/
+    rate-limit blocks are usually temporary and clear up within seconds
+    to a couple of minutes, so backing off and trying again is the right
+    first move before concluding the session is actually gone."""
+    for attempt in range(1, max_attempts + 1):
+        backoff_s = 10 * attempt
+        log(
+            f"  Hit a network error page (likely a transient block, not a "
+            f"logout) -- backing off {backoff_s}s before retry ({attempt}/{max_attempts})..."
+        )
+        page.wait_for_timeout(backoff_s * 1000)
+        try:
+            page.goto(CREATE_FORM_URL, wait_until="domcontentloaded", timeout=30000)
+        except Exception as e:
+            log(f"  Retry navigation also failed: {e}")
+            continue
+        if not is_network_error_page(page) and is_logged_in(page):
+            log("  Recovered -- back on Smart Data.")
+            return True
+    return False
+
+
 def open_create_form_via_direct_url(page, log=print) -> None:
     """The GWT create page has no Angular header -- only a dummy
     iframe (src javascript:''). Reloading this URL (not the SPA root)
     is how we get a fresh form after a confirmation, without dropping
     the session."""
     log("  Opening a fresh create form via direct URL")
-    page.goto(CREATE_FORM_URL, wait_until="domcontentloaded", timeout=30000)
+    try:
+        page.goto(CREATE_FORM_URL, wait_until="domcontentloaded", timeout=30000)
+    except Exception as e:
+        log(f"  Navigation failed ({e})")
+        if not recover_from_network_error(page, log=log):
+            dump_page_frames(page, log)
+            raise_if_logged_out()
+        return open_create_form_via_direct_url(page, log=log)
+
+    if is_network_error_page(page):
+        if not recover_from_network_error(page, log=log):
+            dump_page_frames(page, log)
+            raise_if_logged_out()
+        return open_create_form_via_direct_url(page, log=log)
+
     if not is_logged_in(page):
         dump_page_frames(page, log)
         raise_if_logged_out()
@@ -263,7 +315,15 @@ def open_create_form(page, log=print) -> None:
     create/confirmation page the header nav is gone, so skip Payment
     Control entirely and reload the form URL. Header-menu is only used
     from the SPA shell (first card). Do NOT goto() the SPA root -- that
-    drops the session."""
+    drops the session.
+
+    Starts with a small randomized pause -- hundreds/thousands of
+    identical requests back-to-back with machine-precision timing is
+    exactly the kind of pattern a bank's WAF/bot-detection looks for,
+    especially from a VPS's datacenter IP. This costs a little throughput
+    but is cheap insurance against tripping a block that kills the whole
+    batch."""
+    page.wait_for_timeout(random.uniform(400, 1100))
     page.evaluate("window.scrollTo(0, 0)")
     dismiss_session_dialogs(page)
 

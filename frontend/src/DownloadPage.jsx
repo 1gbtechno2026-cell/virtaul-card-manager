@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { API_BASE } from './apiBase'
 import { downloadCardsExport } from './download'
 import { formatIndianNumber } from './numberWords'
@@ -22,6 +22,7 @@ function DownloadPage({ token, onAuthExpired }) {
   const [mongoConfigured, setMongoConfigured] = useState(true)
   const [batches, setBatches] = useState([])
   const [downloadingBatchId, setDownloadingBatchId] = useState(null)
+  const batchPollRef = useRef(null)
 
   const authHeaders = { Authorization: `Bearer ${token}` }
 
@@ -62,12 +63,23 @@ function DownloadPage({ token, onAuthExpired }) {
     try {
       const res = await fetch(`${API_BASE}/api/batches`, { headers: authHeaders })
       if (res.status === 401) {
+        clearInterval(batchPollRef.current)
         onAuthExpired()
         return
       }
       const body = await res.json()
       if (res.ok) {
         setBatches(body.batches)
+        // Poll for live progress (e.g. 6000/10000) while a batch is
+        // still running -- stop once nothing is, so this doesn't poll
+        // forever in the background for no reason.
+        const stillRunning = body.batches.some((b) => b.status === 'running')
+        if (stillRunning && !batchPollRef.current) {
+          batchPollRef.current = setInterval(fetchBatches, 3000)
+        } else if (!stillRunning && batchPollRef.current) {
+          clearInterval(batchPollRef.current)
+          batchPollRef.current = null
+        }
       }
     } catch {
       // Non-critical -- the date/search filter section above still works
@@ -78,6 +90,7 @@ function DownloadPage({ token, onAuthExpired }) {
   useEffect(() => {
     fetchCards()
     fetchBatches()
+    return () => clearInterval(batchPollRef.current)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -143,7 +156,7 @@ function DownloadPage({ token, onAuthExpired }) {
       </header>
 
       <div className="panel">
-        <h2 className="panel-title">Batches not the bitch </h2>
+        <h2 className="panel-title">Batches</h2>
         <div className="table-wrap">
           <table className="cards-table">
             <thead>

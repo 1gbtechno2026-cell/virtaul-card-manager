@@ -1,15 +1,15 @@
 :root {
-  --primary: #6d28d9;
-  --primary-dark: #5b21b6;
-  --primary-light: #a78bfa;
-  --accent: #4f46e5;
-  --success: #16a34a;
-  --error: #dc2626;
-  --bg: #f5f3ff;
+  --primary: #15436b;
+  --primary-dark: #0e2f4d;
+  --primary-light: #4f86ab;
+  --accent: #0d9488;
+  --success: #15803d;
+  --error: #b91c1c;
+  --bg: #f4f6f8;
   --panel: #ffffff;
-  --border: #e5e0f7;
-  --text: #1f2028;
-  --text-muted: #6b6b76;
+  --border: #dde3ea;
+  --text: #16202a;
+  --text-muted: #5b6672;
 }
 
 .page {
@@ -35,7 +35,7 @@
   width: 220px;
   flex-shrink: 0;
   height: 100vh;
-  background: linear-gradient(180deg, #1e1b4b 0%, #4c1d95 100%);
+  background: linear-gradient(180deg, #0e2f4d 0%, #15436b 100%);
   color: white;
   display: flex;
   flex-direction: column;
@@ -150,7 +150,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  background: #faf9ff;
+  background: #f4f8fb;
   border: 1.5px solid var(--border);
   border-radius: 8px;
   padding: 8px 14px;
@@ -217,7 +217,7 @@
 }
 
 .bank-dropdown-item:hover {
-  background: #f5f3ff;
+  background: #eef3f6;
 }
 
 .bank-dropdown-item.disabled {
@@ -265,7 +265,7 @@
   padding: 28px 32px;
   border-radius: 16px;
   margin-bottom: 28px;
-  box-shadow: 0 10px 30px -12px rgba(109, 40, 217, 0.5);
+  box-shadow: 0 10px 30px -12px rgba(21, 67, 107, 0.5);
 }
 
 .hero-icon {
@@ -364,14 +364,14 @@
   font-size: 0.92rem;
   border: 1.5px solid var(--border);
   border-radius: 8px;
-  background: #faf9ff;
+  background: #f7fafc;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 
 .row input:focus {
   outline: none;
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(109, 40, 217, 0.15);
+  box-shadow: 0 0 0 3px rgba(21, 67, 107, 0.15);
   background: white;
 }
 
@@ -379,7 +379,7 @@
   margin-top: 4px;
   font-size: 0.72rem;
   color: var(--primary-dark);
-  background: #f2edff;
+  background: #e6f2f0;
   border-radius: 6px;
   padding: 3px 8px;
   display: inline-block;
@@ -411,12 +411,12 @@
   align-items: center;
   gap: 8px;
   transition: transform 0.1s, box-shadow 0.15s;
-  box-shadow: 0 6px 16px -6px rgba(109, 40, 217, 0.6);
+  box-shadow: 0 6px 16px -6px rgba(21, 67, 107, 0.55);
 }
 
 .primary-btn:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 8px 20px -6px rgba(109, 40, 217, 0.7);
+  box-shadow: 0 8px 20px -6px rgba(21, 67, 107, 0.65);
 }
 
 .primary-btn:disabled {
@@ -452,7 +452,7 @@
   position: fixed;
   inset: 0;
   z-index: 80;
-  background: rgba(30, 27, 75, 0.48);
+  background: rgba(14, 41, 64, 0.5);
   backdrop-filter: blur(5px);
   display: flex;
   align-items: center;
@@ -463,22 +463,127 @@
 .screen-loader-card {
   background: white;
   border-radius: 16px;
-  padding: 32px 36px;
+  padding: 28px 32px 32px;
   text-align: center;
   min-width: 260px;
   max-width: 360px;
-  box-shadow: 0 24px 50px -16px rgba(30, 27, 75, 0.45);
+  box-shadow: 0 24px 50px -16px rgba(14, 41, 64, 0.45);
 }
 
-.screen-loader-ring {
-  display: block;
-  width: 42px;
-  height: 42px;
-  margin: 0 auto 16px;
-  border: 4px solid var(--border);
-  border-top-color: var(--primary);
-  border-radius: 50%;
-  animation: spin 0.7s linear infinite;
+/* ---------- Card-shaped loader ---------- */
+.card-loader {
+  position: relative;
+  width: 224px;
+  height: 128px;
+  margin: 0 auto 18px;
+  border-radius: 14px;
+  padding: 16px 18px;
+  background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
+  overflow: hidden;
+  box-shadow: 0 12px 26px -12px rgba(14, 41, 64, 0.6);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.card-loader-shine {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    115deg,
+    transparent 40%,
+    rgba(255, 255, 255, 0.3) 50%,
+    transparent 60%
+  );
+  background-size: 250% 250%;
+  animation: card-shine 1.8s ease-in-out infinite;
+}
+
+@keyframes card-shine {
+  0% {
+    background-position: 130% 130%;
+  }
+  100% {
+    background-position: -30% -30%;
+  }
+}
+
+.card-loader-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: relative;
+}
+
+.card-loader-chip {
+  width: 28px;
+  height: 20px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.card-loader-brand {
+  width: 46px;
+  height: 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.card-loader-number {
+  display: flex;
+  gap: 8px;
+  position: relative;
+}
+
+.card-loader-number span {
+  flex: 1;
+  height: 11px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.45);
+  animation: card-pulse 1.3s ease-in-out infinite;
+}
+
+.card-loader-number span:nth-child(2) {
+  animation-delay: 0.1s;
+}
+.card-loader-number span:nth-child(3) {
+  animation-delay: 0.2s;
+}
+.card-loader-number span:nth-child(4) {
+  animation-delay: 0.3s;
+}
+
+.card-loader-bottom {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  position: relative;
+}
+
+.card-loader-line {
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.32);
+  animation: card-pulse 1.3s ease-in-out infinite;
+}
+
+.card-loader-line-wide {
+  width: 70%;
+}
+
+.card-loader-line-narrow {
+  width: 40%;
+  animation-delay: 0.15s;
+}
+
+@keyframes card-pulse {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 .screen-loader-message {
@@ -522,7 +627,7 @@
 
 .progress-track {
   height: 10px;
-  background: #ece8fb;
+  background: #e2e9ed;
   border-radius: 999px;
   overflow: hidden;
 }
@@ -651,14 +756,14 @@
 }
 
 .secondary-btn:hover {
-  background: #f5f3ff;
+  background: #eef3f6;
 }
 
 /* ---------- Confirm Modal ---------- */
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(20, 16, 40, 0.55);
+  background: rgba(10, 26, 41, 0.55);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -838,7 +943,7 @@
   font-weight: 600;
   border-radius: 10px;
   border: 1.5px solid var(--border);
-  background: #faf9ff;
+  background: #f7fafc;
   color: var(--text);
   cursor: pointer;
   text-align: left;
@@ -847,7 +952,7 @@
 
 .bank-option:hover {
   border-color: var(--primary);
-  background: #f2edff;
+  background: #eef3f6;
   transform: translateY(-1px);
 }
 
